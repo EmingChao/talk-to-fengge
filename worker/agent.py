@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
+from livekit import rtc
 from livekit.agents import (
     Agent,
     AgentServer,
@@ -195,6 +196,8 @@ AGENT_PROMPT = os.getenv("AGENT_INSTRUCTIONS", "").strip()
 MOSS_TTS_URL = os.getenv("MOSS_TTS_URL", "http://127.0.0.1:18083/v1/audio/speech").strip()
 MOSS_VOICE_PROFILE = os.getenv("MOSS_VOICE_PROFILE", "ye-local").strip()
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "mimo").strip().lower()
+TEXT_CHAT_TOPIC = "talk-to-fengge.chat"
+MAX_TEXT_INPUT_CHARS = 2000
 MEMORY_SESSION_PREFIX = os.getenv("MEMORY_SESSION_PREFIX", "dev3-pipeline")
 _persona_for_memory = os.getenv("PERSONA_NAME", "fengge").strip().lower()
 _project_root = Path(__file__).resolve().parent.parent
@@ -780,16 +783,70 @@ async def entrypoint(ctx: JobContext) -> None:
         if recorder is not None:
             asyncio.create_task(recorder.finalize())
 
+    pending_text_inputs: list[tuple[str, str, str]] = []
+    session_ready = False
+
+    def _generate_text_reply(message_id: str, text: str, identity: str) -> None:
+        """中断当前回复，并使用收到的文字生成新回复。"""
+        print(
+            f"[text_chat] received id={message_id} from={identity} chars={len(text)}",
+            flush=True,
+        )
+        session.interrupt()
+        session.generate_reply(user_input=text)
+
+    @ctx.room.on("data_received")
+    def _on_text_data_received(packet: rtc.DataPacket) -> None:
+        """接收前端可靠文字消息，并交给当前 AgentSession 生成回复。"""
+        if packet.topic != TEXT_CHAT_TOPIC:
+            return
+        try:
+            payload = json.loads(packet.data.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            print(f"[text_chat] invalid payload: {exc!r}", flush=True)
+            return
+        if not isinstance(payload, dict):
+            print("[text_chat] ignored non-object payload", flush=True)
+            return
+
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            print("[text_chat] ignored empty message", flush=True)
+            return
+        if len(text) > MAX_TEXT_INPUT_CHARS:
+            print(
+                f"[text_chat] ignored oversized message chars={len(text)}",
+                flush=True,
+            )
+            return
+
+        participant = getattr(packet, "participant", None)
+        identity = getattr(participant, "identity", "unknown")
+        message_id = str(payload.get("id") or "unknown")
+        if not session_ready:
+            if len(pending_text_inputs) >= 20:
+                print("[text_chat] pending queue full, message ignored", flush=True)
+                return
+            pending_text_inputs.append((message_id, text, identity))
+            print(f"[text_chat] queued id={message_id} until session ready", flush=True)
+            return
+        _generate_text_reply(message_id, text, identity)
+
     await session.start(
         agent=Dev3Agent(instructions),
         room=ctx.room,
         room_options=room_io.RoomOptions(
             audio_input=True,
-            text_input=True,
+            # 前端使用可靠 DataPacket，自定义处理可避免 TextStream 兼容问题。
+            text_input=False,
             audio_output=True,
             text_output=room_io.TextOutputOptions(sync_transcription=False),
         ),
     )
+    session_ready = True
+    for pending_id, pending_text, pending_identity in pending_text_inputs:
+        _generate_text_reply(pending_id, pending_text, pending_identity)
+    pending_text_inputs.clear()
 
 
 def main() -> None:

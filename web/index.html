@@ -213,17 +213,12 @@
     #sendButton:active, #micButton:active, #muteButton:active { transform: scale(0.96); }
     #sendButton:disabled { cursor: not-allowed; opacity: 0.4; }
     #sendButton:not(:disabled) { border-color: rgba(100, 215, 164, 0.55); }
-    #micButton.connected {
+    #micButton.enabled {
         border-color: #34c759;
         box-shadow: 0 0 28px rgba(52, 199, 89, 0.22), inset 0 0 14px rgba(52, 199, 89, 0.06);
     }
-    #micButton.connected svg { stroke: #6fe08e; }
+    #micButton.enabled svg { stroke: #6fe08e; }
     #muteButton.muted svg { stroke: #ff9f8f; }
-    #micButton.speaking { animation: micPulse 2s ease-in-out infinite; }
-    @keyframes micPulse {
-        0%, 100% { transform: scale(1.0); }
-        50%      { transform: scale(1.05); }
-    }
 
     #controlRow {
         width: min(720px, calc(100vw - 40px));
@@ -276,7 +271,7 @@
 
     <div id="bottomControls">
         <div id="composer">
-            <textarea id="messageInput" rows="1" maxlength="2000" disabled placeholder="连接后输入消息"></textarea>
+            <textarea id="messageInput" rows="1" maxlength="2000" placeholder="正在连接，可先输入消息"></textarea>
             <button id="sendButton" disabled aria-label="发送消息" title="发送消息">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M22 2 11 13"></path>
@@ -285,7 +280,7 @@
             </button>
         </div>
         <div id="controlRow">
-            <button id="micButton" aria-label="连接对话" title="连接或断开对话">
+            <button id="micButton" aria-label="启用麦克风" title="启用或关闭麦克风">
                 <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <rect x="9" y="2.5" width="6" height="11.5" rx="3"></rect>
                     <path d="M5 11.5a7 7 0 0 0 14 0"></path>
@@ -326,6 +321,7 @@ function bootTalkToMe() {
 
     const MODEL_NAME = '峰哥';
     const MAX_VISIBLE_MESSAGES = 100;
+    const TEXT_CHAT_TOPIC = 'talk-to-fengge.chat';
 
     // ================================================================
     //  DOM
@@ -708,6 +704,7 @@ function bootTalkToMe() {
     function ensureAudioGraph() {
         if (audioContext) {
             if (audioContext.state === 'suspended') audioContext.resume();
+            if (remoteAudio.play) remoteAudio.play().catch(() => {});
             return;
         }
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -731,6 +728,7 @@ function bootTalkToMe() {
         audioContext._micGain = audioContext.createGain();
         audioContext._micGain.gain.value = 0.3; // local mic, secondary
         audioContext._micGain.connect(analyser); // NOT to destination (no feedback)
+        if (remoteAudio.play) remoteAudio.play().catch(() => {});
     }
 
     function connectMicToAnalyser(mediaStreamTrack) {
@@ -969,12 +967,16 @@ function bootTalkToMe() {
     let connected = false;
     let connecting = false;
     let localIdentity = '';
+    let microphoneEnabled = false;
+    let agentReady = false;
 
-    /** 根据房间连接状态启用或禁用文字输入。 */
+    /** 更新输入提示；即使房间暂未连接，也允许用户先填写文字。 */
     function setComposerEnabled(enabled) {
-        messageInput.disabled = !enabled;
-        sendButton.disabled = !enabled || !messageInput.value.trim();
-        messageInput.placeholder = enabled ? '输入消息，Enter 发送' : '连接后输入消息';
+        messageInput.disabled = false;
+        sendButton.disabled = !messageInput.value.trim();
+        messageInput.placeholder = enabled
+            ? '输入消息，Enter 发送'
+            : '正在连接，可先输入消息';
     }
 
     /** 注册 AI 与用户语音转写的原生 LiveKit 文本流处理器。 */
@@ -999,32 +1001,54 @@ function bootTalkToMe() {
         });
     }
 
-    /** 通过 lk.chat 将用户文字发送到当前 AgentSession。 */
+    /** 生成不依赖安全上下文 crypto.randomUUID 的消息标识。 */
+    function createMessageId() {
+        return 'msg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    }
+
+    /** 通过可靠 DataPacket 将用户文字发送到当前 AgentSession。 */
     async function sendMessage() {
         const text = messageInput.value.trim();
         if (!text) return;
         if (!connected || !room) {
-            showToast('请先连接对话');
+            if (!connecting) connect();
+            showToast('正在连接，请稍后再次发送');
+            return;
+        }
+        if (!agentReady) {
+            showToast('峰哥正在进入房间，请稍后再次发送');
             return;
         }
 
+        // 用户点击发送属于浏览器手势，可在此恢复远端音频播放上下文。
+        ensureAudioGraph();
+        const messageId = createMessageId();
+        const payload = new TextEncoder().encode(JSON.stringify({
+            type: 'user_message',
+            id: messageId,
+            text: text,
+        }));
         messageInput.value = '';
         messageInput.style.height = 'auto';
         sendButton.disabled = true;
         try {
-            await room.localParticipant.sendText(text, { topic: 'lk.chat' });
-            upsertMessage('user', text, 'typed-' + Date.now());
+            await room.localParticipant.publishData(payload, {
+                reliable: true,
+                topic: TEXT_CHAT_TOPIC,
+            });
+            upsertMessage('user', text, messageId);
         } catch (error) {
-            console.error('send text failed', error);
+            console.error('publish text data failed', error);
             messageInput.value = text;
             sendButton.disabled = false;
-            showToast('消息发送失败，请重试');
+            const reason = error && error.message ? error.message : '未知错误';
+            showToast('消息发送失败：' + reason);
         }
     }
 
     sendButton.addEventListener('click', sendMessage);
     messageInput.addEventListener('input', () => {
-        sendButton.disabled = !connected || !messageInput.value.trim();
+        sendButton.disabled = !messageInput.value.trim();
         messageInput.style.height = 'auto';
         messageInput.style.height = Math.min(messageInput.scrollHeight, 112) + 'px';
     });
@@ -1036,9 +1060,8 @@ function bootTalkToMe() {
     });
 
     async function connect() {
-        if (connected || connecting) return;
+        if (connected || connecting) return connected;
         connecting = true;
-        ensureAudioGraph();
         setStatus('connecting');
 
         try {
@@ -1050,9 +1073,8 @@ function bootTalkToMe() {
             room.on(LivekitClient.RoomEvent.Connected, () => {
                 connected = true;
                 localIdentity = room.localParticipant ? room.localParticipant.identity : '';
+                agentReady = room.remoteParticipants && room.remoteParticipants.size > 0;
                 setStatus('connected');
-                micButton.classList.add('connected');
-                micButton.setAttribute('aria-label', '断开对话');
                 setComposerEnabled(true);
                 startTimer();
             });
@@ -1060,14 +1082,25 @@ function bootTalkToMe() {
             room.on(LivekitClient.RoomEvent.Disconnected, () => {
                 connected = false;
                 connecting = false;
+                agentReady = false;
                 setStatus('disconnected');
-                micButton.classList.remove('connected', 'speaking');
-                micButton.setAttribute('aria-label', '连接对话');
+                microphoneEnabled = false;
+                micButton.classList.remove('enabled');
+                micButton.setAttribute('aria-label', '启用麦克风');
                 setComposerEnabled(false);
                 stopTimer();
                 disconnectMicFromAnalyser();
                 remoteAudio.srcObject = null;
                 room = null;
+            });
+
+            room.on(LivekitClient.RoomEvent.ParticipantConnected, () => {
+                agentReady = true;
+                setStatus('connected');
+            });
+
+            room.on(LivekitClient.RoomEvent.ParticipantDisconnected, () => {
+                agentReady = room.remoteParticipants && room.remoteParticipants.size > 0;
             });
 
             room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
@@ -1086,61 +1119,75 @@ function bootTalkToMe() {
                 remoteAudio.srcObject = null;
             });
 
-            room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (speakers) => {
-                const aiSpeaking = speakers.some((s) => s.identity !== localIdentity);
-                micButton.classList.toggle('speaking', aiSpeaking);
-            });
-
             room.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
                 handleDataMessage(payload);
             });
 
             await room.connect(connectionInfo.livekit_url, connectionInfo.token);
-
-            try {
-                await room.localParticipant.setMicrophoneEnabled(true);
-                // feed local mic into the analyser (secondary, gain 0.3)
-                const pubs = room.localParticipant.audioTrackPublications;
-                const pub = pubs && pubs.size ? pubs.values().next().value : null;
-                if (pub && pub.track && pub.track.mediaStreamTrack) {
-                    connectMicToAnalyser(pub.track.mediaStreamTrack);
-                }
-            } catch (micErr) {
-                console.warn('microphone error', micErr);
-                showToast('麦克风不可用，仍可输入文字交流');
-            }
-
             connecting = false;
+            return true;
         } catch (err) {
             console.error(err);
             connecting = false;
             connected = false;
             setStatus('error', '连接失败');
-            micButton.classList.remove('connected', 'speaking');
+            micButton.classList.remove('enabled');
             setComposerEnabled(false);
             if (room) { try { room.disconnect(); } catch (_) {} room = null; }
+            return false;
         }
     }
 
-    function disconnect() {
-        if (room) { room.disconnect(); room = null; }
-        connected = false;
-        connecting = false;
-        setStatus('disconnected');
-        micButton.classList.remove('connected', 'speaking');
-        micButton.setAttribute('aria-label', '连接对话');
-        setComposerEnabled(false);
-        stopTimer();
-        disconnectMicFromAnalyser();
+    /** 只切换麦克风输入，不再承担房间连接和断开职责。 */
+    async function toggleMicrophone() {
+        if (!connected) {
+            const connectedNow = await connect();
+            if (!connectedNow) {
+                showToast('房间尚未连接，无法启用麦克风');
+                return;
+            }
+        }
+
+        ensureAudioGraph();
+        const nextEnabled = !microphoneEnabled;
+        try {
+            await room.localParticipant.setMicrophoneEnabled(nextEnabled);
+            microphoneEnabled = nextEnabled;
+            micButton.classList.toggle('enabled', microphoneEnabled);
+            micButton.setAttribute(
+                'aria-label',
+                microphoneEnabled ? '关闭麦克风' : '启用麦克风'
+            );
+            micButton.title = microphoneEnabled ? '关闭麦克风' : '启用麦克风';
+
+            if (!microphoneEnabled) {
+                disconnectMicFromAnalyser();
+                return;
+            }
+            const publications = room.localParticipant.audioTrackPublications;
+            const publication = publications && publications.size
+                ? publications.values().next().value
+                : null;
+            if (publication && publication.track && publication.track.mediaStreamTrack) {
+                connectMicToAnalyser(publication.track.mediaStreamTrack);
+            }
+        } catch (error) {
+            console.warn('microphone error', error);
+            microphoneEnabled = false;
+            micButton.classList.remove('enabled');
+            const message = window.isSecureContext
+                ? '麦克风启用失败，请检查浏览器权限'
+                : '当前是非安全 HTTP 页面，浏览器禁止麦克风；文字对话仍可使用';
+            showToast(message);
+        }
     }
 
-    micButton.addEventListener('click', () => {
-        connected ? disconnect() : connect();
-    });
+    micButton.addEventListener('click', toggleMicrophone);
 
     applyRemoteMute();
     setComposerEnabled(false);
     setStatus('ready');
+    connect();
 }
 
 if (window.THREE) bootTalkToMe();
