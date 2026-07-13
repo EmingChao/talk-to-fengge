@@ -175,6 +175,8 @@ class MiMoVoiceCloneTTS(TTS):
                 chunks = 0
                 total_bytes = 0
                 first_audio_at: float | None = None
+                last_audio_at: float | None = None
+                max_chunk_gap_ms = 0.0
                 if "text/event-stream" in content_type:
                     async for line in response.aiter_lines():
                         if not line.startswith("data:"):
@@ -184,9 +186,16 @@ class MiMoVoiceCloneTTS(TTS):
                             continue
                         audio_bytes = self._decode_event_audio(data)
                         if audio_bytes:
+                            received_at = time.time()
+                            if last_audio_at is not None:
+                                max_chunk_gap_ms = max(
+                                    max_chunk_gap_ms,
+                                    (received_at - last_audio_at) * 1000,
+                                )
                             chunks += 1
                             total_bytes += len(audio_bytes)
-                            first_audio_at = first_audio_at or time.time()
+                            first_audio_at = first_audio_at or received_at
+                            last_audio_at = received_at
                             yield request_id, audio_bytes
                 else:
                     raw = await response.aread()
@@ -195,6 +204,7 @@ class MiMoVoiceCloneTTS(TTS):
                         chunks = 1
                         total_bytes = len(audio_bytes)
                         first_audio_at = time.time()
+                        last_audio_at = first_audio_at
                         yield request_id, audio_bytes
 
                 if total_bytes == 0:
@@ -204,7 +214,8 @@ class MiMoVoiceCloneTTS(TTS):
                 print(
                     f"[mimo_tts] ok model={self._opts.model} total={elapsed_ms:.0f}ms "
                     f"ttfb={ttfb_ms:.0f}ms text_len={len(stripped)} "
-                    f"chunks={chunks} bytes={total_bytes}",
+                    f"chunks={chunks} max_chunk_gap={max_chunk_gap_ms:.0f}ms "
+                    f"bytes={total_bytes}",
                     flush=True,
                 )
         except httpx.TimeoutException as exc:
@@ -251,15 +262,27 @@ class _MiMoChunkedStream(ChunkedStream):
         super().__init__(tts=tts, input_text=input_text, conn_options=conn_options)
 
     async def _run(self, output_emitter: tts.AudioEmitter) -> None:
-        """初始化 PCM 输出并依次推送接口返回的音频片段。"""
-        initialized = False
+        """完整缓冲单句 PCM 后一次推送，避免 API 分块间隔造成播放欠载。"""
+        request_id = ""
+        audio_chunks: list[bytes] = []
         async for request_id, pcm_bytes in self._mimo_tts.iter_audio(self.input_text):
-            if not initialized:
-                output_emitter.initialize(
-                    request_id=request_id,
-                    sample_rate=self._mimo_tts.sample_rate,
-                    num_channels=self._mimo_tts.num_channels,
-                    mime_type="audio/pcm",
-                )
-                initialized = True
-            output_emitter.push(pcm_bytes)
+            audio_chunks.append(pcm_bytes)
+
+        pcm_audio = b"".join(audio_chunks)
+        if not pcm_audio:
+            raise APIError("MiMo TTS 没有可播放的 PCM 音频")
+        if len(pcm_audio) % 2 != 0:
+            raise APIError("MiMo TTS 返回的 PCM16 音频长度无效")
+
+        output_emitter.initialize(
+            request_id=request_id,
+            sample_rate=self._mimo_tts.sample_rate,
+            num_channels=self._mimo_tts.num_channels,
+            mime_type="audio/pcm",
+        )
+        output_emitter.push(pcm_audio)
+        print(
+            f"[mimo_tts] buffered text_len={len(self.input_text)} "
+            f"chunks={len(audio_chunks)} bytes={len(pcm_audio)}",
+            flush=True,
+        )

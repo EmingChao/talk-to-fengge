@@ -982,21 +982,33 @@ function bootTalkToMe() {
     /** 注册 AI 与用户语音转写的原生 LiveKit 文本流处理器。 */
     function registerTextHandlers(activeRoom) {
         activeRoom.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
+            const attributes = reader.info && reader.info.attributes
+                ? reader.info.attributes
+                : {};
+            const segmentId = attributes['lk.segment_id']
+                || (reader.info && reader.info.id)
+                || 'segment-' + Date.now() + '-' + Math.random();
+            const identity = participantInfo && participantInfo.identity
+                ? participantInfo.identity
+                : String(participantInfo || '');
+            const role = identity === localIdentity ? 'user' : 'assistant';
+            let accumulatedText = '';
             try {
-                const text = await reader.readAll();
-                const attributes = reader.info && reader.info.attributes
-                    ? reader.info.attributes
-                    : {};
-                const segmentId = attributes['lk.segment_id']
-                    || (reader.info && reader.info.id)
-                    || 'segment-' + Date.now() + '-' + Math.random();
-                const identity = participantInfo && participantInfo.identity
-                    ? participantInfo.identity
-                    : String(participantInfo || '');
-                const role = identity === localIdentity ? 'user' : 'assistant';
-                upsertMessage(role, text, segmentId);
+                // 新版 SDK 支持异步迭代，逐块更新可保留长回复的部分结果。
+                if (reader[Symbol.asyncIterator]) {
+                    for await (const chunk of reader) {
+                        accumulatedText += typeof chunk === 'string'
+                            ? chunk
+                            : new TextDecoder().decode(chunk);
+                        upsertMessage(role, accumulatedText, segmentId);
+                    }
+                } else {
+                    accumulatedText = await reader.readAll();
+                    upsertMessage(role, accumulatedText, segmentId);
+                }
             } catch (error) {
                 console.warn('transcription stream error', error);
+                if (accumulatedText) upsertMessage(role, accumulatedText, segmentId);
             }
         });
     }
