@@ -1,9 +1,9 @@
-"""阶段 23: TTS 工厂 — 按 TTS_PROVIDER 选实现 (cartesia | minimax | moss)。
+"""TTS 工厂：根据 TTS_PROVIDER 创建语音合成实现。
 
 设计目标：
 - 单一入口 build_tts(provider, ...) -> (tts_instance, label)
 - 各 provider 互不耦合，加新 provider 只改这里
-- 失败时降级到 moss（CPU 兜底），保证不断流
+- 旧 provider 仍可降级到 MOSS；MiMo 配置错误直接报告，由文字通道兜底
 """
 
 from __future__ import annotations
@@ -95,6 +95,35 @@ def _build_minimax() -> Tuple[object, str]:
     return tts, label
 
 
+def _build_mimo() -> Tuple[object, str]:
+    """创建小米 MiMo VoiceClone TTS。"""
+    from worker.mimo_tts import MiMoVoiceCloneTTS
+
+    api_key = os.getenv("MIMO_TTS_API_KEY", "").strip()
+    base_url = os.getenv(
+        "MIMO_TTS_BASE_URL",
+        "https://api.xiaomimimo.com/v1",
+    ).strip()
+    model = os.getenv("MIMO_TTS_MODEL", "mimo-v2.5-tts-voiceclone").strip()
+    voice_file_raw = os.getenv(
+        "MIMO_TTS_VOICE_FILE",
+        "assets/voice_samples/fengge_ref.wav",
+    ).strip()
+    voice_file = Path(voice_file_raw)
+    if not voice_file.is_absolute():
+        voice_file = PROJECT_ROOT / voice_file
+    style_prompt = os.getenv("MIMO_TTS_STYLE_PROMPT", "").strip()
+
+    tts = MiMoVoiceCloneTTS(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        voice_file=voice_file,
+        style_prompt=style_prompt,
+    )
+    return tts, f"mimo:{model}/{voice_file.name}/24000Hz"
+
+
 def _build_moss(moss_url: str, moss_voice: str) -> Tuple[object, str]:
     """MOSS 本地 CPU TTS（兜底方案）。"""
     tts = MossHttpTTS(url=moss_url, voice=moss_voice)
@@ -107,8 +136,14 @@ def build_tts(provider: str, moss_url: str, moss_voice: str) -> Tuple[object, st
     Returns:
         (tts_instance, label_for_log)
     """
-    provider = (provider or "cartesia").strip().lower()
+    provider = (provider or "mimo").strip().lower()
     started = time.time()
+
+    # MiMo 的 Token Plan 与按量密钥不可混用，错误必须在启动阶段明确暴露。
+    if provider in ("mimo", "xiaomi"):
+        tts, label = _build_mimo()
+        print(f"[tts_factory] loaded {label} in {(time.time()-started)*1000:.0f}ms", flush=True)
+        return tts, label
 
     # 1. 优先按 provider 选
     if provider == "voxcpm":

@@ -185,7 +185,7 @@ os.environ["AGENT_NAME"] = AGENT_NAME  # 阶段 29: 把推出来的 AGENT_NAME �
 AGENT_PROMPT = os.getenv("AGENT_INSTRUCTIONS", "").strip()
 MOSS_TTS_URL = os.getenv("MOSS_TTS_URL", "http://127.0.0.1:18083/v1/audio/speech").strip()
 MOSS_VOICE_PROFILE = os.getenv("MOSS_VOICE_PROFILE", "ye-local").strip()
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "cartesia").strip().lower()  # 阶段 23：cartesia | minimax | moss
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "mimo").strip().lower()
 MEMORY_SESSION_PREFIX = os.getenv("MEMORY_SESSION_PREFIX", "dev3-pipeline")
 _persona_for_memory = os.getenv("PERSONA_NAME", "fengge").strip().lower()
 _project_root = Path(__file__).resolve().parent.parent
@@ -335,7 +335,7 @@ class Dev3Agent(Agent):
         stt_instance = self._build_stt()
         # 阶段 29: LLM 按 LLM_PROVIDER env 选 gemini / deepseek / minimax
         llm_instance = self._build_llm()
-        # 阶段 23：TTS 按 TTS_PROVIDER 选实现（cartesia / minimax / moss）
+        # TTS 按 TTS_PROVIDER 选择，部署环境默认使用 MiMo VoiceClone。
         tts_instance, tts_label = build_tts(TTS_PROVIDER, MOSS_TTS_URL, MOSS_VOICE_PROFILE)
         vad_instance = EnergyVAD(
             speech_threshold=500,
