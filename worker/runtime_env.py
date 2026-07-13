@@ -14,11 +14,8 @@ _PROXY_KEYS = (
 _NO_PROXY_KEYS = ("NO_PROXY", "no_proxy")
 _LOCAL_NO_PROXY_HOSTS = ("127.0.0.1", "localhost", "::1")
 
-# 默认出口代理（主公 ShadowsocksX-NG privoxy 1087）。
-# 阶段 20 修复：worker 启动时没有这个 env，导致 google.genai / httpx 等无法联外网
-# （macOS launchd 域进程不会自动带 zsh shell 里的代理 env）。
-# 设了之后所有走 genai/httpx 的调用都走 1087，同时配合 NO_PROXY 把 localhost 排除。
-_DEFAULT_EGRESS_PROXY = os.getenv("EGRESS_PROXY_URL", "http://127.0.0.1:1087")
+# 服务器和容器默认直连；确需代理时由部署环境显式配置 EGRESS_PROXY_URL。
+_DEFAULT_EGRESS_PROXY = os.getenv("EGRESS_PROXY_URL", "").strip() or None
 
 
 def _merge_no_proxy(existing: str) -> str:
@@ -41,7 +38,7 @@ def configure_local_no_proxy() -> None:
 
 
 def configure_egress_proxy(proxy_url: str | None = _DEFAULT_EGRESS_PROXY) -> None:
-    """把 1087 写到 http_proxy/https_proxy env。
+    """将显式配置的出口代理写入标准代理环境变量。
 
     必须在 import google.genai / httpx / aiohttp 之前调用。
     如果主公显式给了别的 URL，用主公的；否则用默认 1087。

@@ -35,6 +35,7 @@ for env_name in (".env.local", ".env"):
 API_KEY = os.getenv("LIVEKIT_API_KEY", "devkey")
 API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
 LIVEKIT_URL = os.getenv("LIVEKIT_URL", "ws://127.0.0.1:7880")
+LIVEKIT_PUBLIC_URL = os.getenv("LIVEKIT_PUBLIC_URL", LIVEKIT_URL)
 AGENT_NAME = os.getenv("AGENT_NAME", "talk-to-me-dev3")
 assert AGENT_NAME, "AGENT_NAME is required"
 
@@ -58,11 +59,14 @@ def create_room_and_token(room_base: str, identity: str, name: str) -> dict:
 
     # 阶段 29: room 前缀 → agent_name 路由
     _PROVIDER_TO_AGENT = {
+        "mimo": "talk-to-me-mimo",
         "minimax": "talk-to-me-minimax",
         "deepseek": "talk-to-me-deepseek",
         "gemini": "talk-to-me-gemini",
     }
-    if "ttm-minimax" in room_base:
+    if "ttm-mimo" in room_base:
+        target_agent = _PROVIDER_TO_AGENT["mimo"]
+    elif "ttm-minimax" in room_base:
         target_agent = _PROVIDER_TO_AGENT["minimax"]
     elif "ttm-deepseek" in room_base:
         target_agent = _PROVIDER_TO_AGENT["deepseek"]
@@ -107,7 +111,7 @@ def create_room_and_token(room_base: str, identity: str, name: str) -> dict:
         "token": user_token,
         "room": room_name,
         "identity": identity,
-        "livekit_url": LIVEKIT_URL,
+        "livekit_url": LIVEKIT_PUBLIC_URL,
     }
 
 
@@ -160,9 +164,11 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main():
+    """启动静态页面与 LiveKit token HTTP 服务。"""
+    host = os.getenv("WEB_HOST", "0.0.0.0")
     port = int(os.getenv("WEB_PORT", "8766"))
-    server = HTTPServer(("127.0.0.1", port), Handler)
-    print(f"[web] http://127.0.0.1:{port}", flush=True)
+    server = HTTPServer((host, port), Handler)
+    print(f"[web] http://{host}:{port}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

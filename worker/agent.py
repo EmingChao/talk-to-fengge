@@ -10,7 +10,16 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, JobExecutorType, cli, llm
+from livekit.agents import (
+    Agent,
+    AgentServer,
+    AgentSession,
+    JobContext,
+    JobExecutorType,
+    cli,
+    llm,
+    room_io,
+)
 from livekit.agents.types import NOT_GIVEN, DEFAULT_API_CONNECT_OPTIONS  # 阶段 29.1
 from livekit.agents import utils  # 阶段 29.1: shortuuid
 # 关键：livekit-plugins-cartesia 的 @Plugin 装饰器要求主线程 import
@@ -721,8 +730,6 @@ async def entrypoint(ctx: JobContext) -> None:
         if ev.is_final:
             _timing["stt_final"] = now
         print(f"[timing] stt_final={ev.is_final} t={now:.3f}: {ev.transcript}", flush=True)
-        if recorder is not None and ev.is_final and isinstance(ev.transcript, str):
-            asyncio.create_task(recorder.add_message("user", ev.transcript))
 
     @session.on("conversation_item_added")
     def _on_conversation_item_added(ev) -> None:
@@ -748,7 +755,24 @@ async def entrypoint(ctx: JobContext) -> None:
 
     @session.on("error")
     def _on_error(ev) -> None:
-        print(f"[agent] error source={ev.source}: {ev.error}", flush=True)
+        source = str(ev.source)
+        print(f"[agent] error source={source}: {ev.error}", flush=True)
+        if "tts" in source.lower():
+            payload = json.dumps(
+                {
+                    "type": "agent_status",
+                    "code": "tts_unavailable",
+                    "message": "语音回复暂时不可用，文字对话仍可继续",
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            asyncio.create_task(
+                ctx.room.local_participant.publish_data(
+                    payload,
+                    reliable=True,
+                    topic="agent.status",
+                )
+            )
 
     @session.on("close")
     def _on_close(ev) -> None:
@@ -756,7 +780,16 @@ async def entrypoint(ctx: JobContext) -> None:
         if recorder is not None:
             asyncio.create_task(recorder.finalize())
 
-    await session.start(agent=Dev3Agent(instructions), room=ctx.room)
+    await session.start(
+        agent=Dev3Agent(instructions),
+        room=ctx.room,
+        room_options=room_io.RoomOptions(
+            audio_input=True,
+            text_input=True,
+            audio_output=True,
+            text_output=room_io.TextOutputOptions(sync_transcription=False),
+        ),
+    )
 
 
 def main() -> None:
