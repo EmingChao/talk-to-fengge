@@ -64,7 +64,7 @@ docker compose build worker
 docker compose up -d
 ```
 
-生产环境还需要 HTTPS/WSS、域名和 WebRTC 防火墙端口。完整步骤见 [Docker 服务器部署指南](docs/docker-deployment.md)。
+默认支持公网 IP 直接访问，并使用 `7882/UDP` 单端口承载 WebRTC 媒体流。普通 HTTP IP 页面通常无法使用浏览器麦克风；需要语音输入时仍应配置可信 HTTPS。完整步骤见 [Docker 服务器部署指南](docs/docker-deployment.md)。
 
 Docker 部署默认使用：
 

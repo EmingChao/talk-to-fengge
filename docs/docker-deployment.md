@@ -9,20 +9,19 @@
 - Linux x86_64 或 arm64 服务器，2 核 CPU、4 GB 内存。
 - Docker Engine 24+ 和 Docker Compose v2。
 - 一张可被浏览器访问的公网 IP。
-- 两个域名，例如 `chat.example.com` 和 `livekit.example.com`。
-- 两个域名均已签发 TLS 证书。
 
-DNS 需要将两个域名的 A/AAAA 记录指向服务器。浏览器麦克风要求安全上下文，生产环境必须使用 HTTPS；LiveKit 信令对应使用 WSS。
+当前默认按“公网 IP 直接访问”配置，不要求域名。需要注意：浏览器通常禁止普通 `http://公网IP` 页面使用麦克风，因此 IP 直连适合先使用文字输入和 AI 语音回复。若要使用浏览器麦克风，仍需为页面提供浏览器信任的 HTTPS。
 
 开放以下防火墙端口：
 
 | 协议 | 端口 | 用途 |
 | --- | --- | --- |
-| TCP | 80、443 | Web 页面、HTTPS 和 LiveKit WSS |
+| TCP | 8766 | Web 页面 |
+| TCP | 7880 | LiveKit WebSocket 信令 |
 | TCP | 7881 | LiveKit WebRTC TCP 兜底 |
-| UDP | 50000-50100 | LiveKit WebRTC 媒体流 |
+| UDP | 7882 | LiveKit WebRTC 媒体流（单端口复用） |
 
-`7880` 和 `8766` 由 Compose 映射到宿主机，使用 Nginx 时可在云安全组中限制为仅本机访问。
+SSH 使用的 TCP `22` 应只允许管理 IP。若后续增加 HTTPS，再开放 TCP `80`、`443`，并将 `7880`、`8766` 限制为仅本机访问。
 
 ## 2. 配置环境变量
 
@@ -39,7 +38,7 @@ chmod 600 .env
 LIVEKIT_API_KEY=随机生成的访问标识
 LIVEKIT_API_SECRET=至少32字节的随机密钥
 LIVEKIT_NODE_IP=服务器公网IP
-LIVEKIT_PUBLIC_URL=wss://livekit.example.com
+LIVEKIT_PUBLIC_URL=ws://服务器公网IP:7880
 
 CARTESIA_API_KEY=Cartesia密钥
 
@@ -61,7 +60,26 @@ MiMo 的两种密钥不能混用：
 
 真实密钥只能放在服务器 `.env`，不能写入 Dockerfile、Compose、前端文件或 Git。
 
-## 3. 配置 HTTPS 与 WSS
+## 3. 使用公网 IP 访问
+
+确认 `.env` 中的两个 IP 均已替换：
+
+```env
+LIVEKIT_NODE_IP=203.0.113.10
+LIVEKIT_PUBLIC_URL=ws://203.0.113.10:7880
+```
+
+启动后通过以下地址访问：
+
+```text
+http://203.0.113.10:8766
+```
+
+请把示例地址中的 `203.0.113.10` 替换为真实公网 IP。此模式不需要 Nginx，但 `8766/TCP`、`7880/TCP`、`7881/TCP` 和 `7882/UDP` 必须同时在云安全组与服务器防火墙中放行。
+
+公网 IP 的普通 HTTP 页面通常不能申请麦克风权限。文字输入、文字回复和 AI 语音播放不依赖麦克风，可以先用于部署验收。
+
+## 4. 可选：配置 HTTPS 与 WSS
 
 仓库提供 [Nginx 示例](../deploy/nginx.conf.example)。替换其中域名和证书路径后，将配置安装到服务器 Nginx。
 
@@ -71,7 +89,7 @@ MiMo 的两种密钥不能混用：
 https://chat.example.com     -> 127.0.0.1:8766
 wss://livekit.example.com    -> 127.0.0.1:7880
 WebRTC TCP                   -> 公网IP:7881
-WebRTC UDP                   -> 公网IP:50000-50100
+WebRTC UDP                   -> 公网IP:7882
 ```
 
 检查并重载 Nginx：
@@ -83,7 +101,7 @@ sudo systemctl reload nginx
 
 若使用 Caddy、Traefik 或云负载均衡，需保证 LiveKit 域名支持 WebSocket Upgrade，并将长连接空闲超时调高。
 
-## 4. 构建和启动
+## 5. 构建和启动
 
 先检查配置展开结果：
 
@@ -112,20 +130,20 @@ docker compose logs -f livekit worker web
 - Web 监听 `0.0.0.0:8766`。
 - 浏览器请求 `/token` 后，日志出现房间创建和 Agent dispatch。
 
-打开 `https://chat.example.com`，点击麦克风图标连接。允许麦克风可进行语音对话；拒绝麦克风权限后仍可在输入框发送文字。扬声器按钮只控制 AI 回复音量，不影响文字。
+无域名时打开 `http://公网IP:8766`。点击连接后可输入文字，AI 会返回文字并播放克隆语音。扬声器按钮只控制 AI 回复音量，不影响文字。配置可信 HTTPS 后，允许麦克风即可进行语音输入。
 
-## 5. 部署验收
+## 6. 部署验收
 
 依次验证：
 
-1. 页面通过 HTTPS 打开，状态为“峰哥就绪”。
+1. 页面通过公网 IP 打开，状态为“峰哥就绪”。
 2. 点击连接后状态变为“峰哥对话中”。
 3. 输入文字后，页面显示用户消息与 AI 回复，并播放克隆语音。
 4. 静音后仍能持续看到和发送文字。
-5. 允许麦克风后，Cartesia 能识别中文并触发回复。
+5. 配置可信 HTTPS 后，允许麦克风，Cartesia 能识别中文并触发回复。
 6. 暂时填入错误的 TTS 密钥时，页面仍显示 LLM 文字回复和“语音回复暂时不可用”提示。
 
-## 6. 更新与回滚
+## 7. 更新与回滚
 
 更新代码后重新构建应用镜像：
 
@@ -137,11 +155,11 @@ docker compose up -d
 
 回滚时切回已知可用的 Git commit，再执行相同的构建和启动命令。`.env` 不受 Git 管理，不需要重复填写。
 
-## 7. 常见问题
+## 8. 常见问题
 
 ### 页面能打开但连接失败
 
-检查 `LIVEKIT_PUBLIC_URL` 是否为浏览器可访问的 `wss://` 地址，并确认 Nginx 已转发 WebSocket Upgrade。随后查看：
+IP 直连时检查 `LIVEKIT_PUBLIC_URL` 是否为浏览器可访问的 `ws://公网IP:7880`。使用 HTTPS 时应改成 `wss://` 地址，并确认 Nginx 已转发 WebSocket Upgrade。随后查看：
 
 ```bash
 docker compose logs --tail=200 livekit web
@@ -169,7 +187,7 @@ docker compose logs --tail=200 worker web
 
 ### 只能连接但听不到媒体流
 
-确认云安全组和系统防火墙已开放 UDP `50000-50100`、TCP `7881`，并确认 `LIVEKIT_NODE_IP` 是服务器公网 IP，而不是容器或内网地址。
+确认云安全组和系统防火墙已开放 UDP `7882`、TCP `7881`，并确认 `LIVEKIT_NODE_IP` 是服务器公网 IP，而不是容器或内网地址。
 
 ### LiveKit 一直不健康
 
