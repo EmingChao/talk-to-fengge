@@ -19,7 +19,7 @@ from livekit.plugins import cartesia  # noqa: F401  阶段 28: STT 走 Cartesia 
 
 from worker.energy_vad import EnergyVAD
 from worker.gemini_stt import GeminiSTT
-from worker.llm_factory import DeepSeekChatStream, MiniMaxChatStream
+from worker.llm_factory import DeepSeekChatStream, MiMoChatStream, MiniMaxChatStream
 from worker.memory_client import MemoryClient, build_memory_context
 from worker.memory_recall import build_memory_block  # 阶段 28: 一次性 memory 快照
 from worker.moss_tts import MossHttpTTS
@@ -165,8 +165,10 @@ STT_PROVIDER = os.getenv("STT_PROVIDER", "gemini")
 #   LLM_PROVIDER=deepseek  → AGENT_NAME=talk-to-me-deepseek
 #   LLM_PROVIDER=gemini    → AGENT_NAME=talk-to-me-gemini
 # 阶段 29 兼容老 env：没设 LLM_PROVIDER 时退化到 talk-to-me-dev3
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower() or "gemini"
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "mimo").strip().lower() or "mimo"
 _DEFAULT_AGENT_NAME_BY_LLM = {
+    "mimo": "talk-to-me-mimo",
+    "xiaomi": "talk-to-me-mimo",
     "minimax": "talk-to-me-minimax",
     "deepseek": "talk-to-me-deepseek",
     "gemini": "talk-to-me-gemini",
@@ -373,6 +375,7 @@ class Dev3Agent(Agent):
         gemini   → google.LLM（livekit 包装）
         deepseek → _OpenAICompatLLM(DeepSeekChatStream)
         minimax  → _OpenAICompatLLM(MiniMaxChatStream)
+        mimo     → _OpenAICompatLLM(MiMoChatStream)
         """
         prov = LLM_PROVIDER
         if prov == "deepseek":
@@ -390,6 +393,18 @@ class Dev3Agent(Agent):
                     max_tokens=int(os.getenv("MINIMAX_MAX_TOKENS", "150")),
                 )
             )
+        if prov in ("mimo", "xiaomi"):
+            return _OpenAICompatLLM(
+                MiMoChatStream(
+                    api_key=os.getenv("MIMO_LLM_API_KEY", ""),
+                    model=os.getenv("MIMO_LLM_MODEL", "mimo-v2.5"),
+                    base_url=os.getenv(
+                        "MIMO_LLM_BASE_URL",
+                        "https://token-plan-cn.xiaomimimo.com/v1",
+                    ),
+                    max_tokens=int(os.getenv("MIMO_LLM_MAX_TOKENS", "2048")),
+                )
+            )
         # gemini / google 默认
         return google.LLM(model=LLM_MODEL, api_key=GOOGLE_API_KEY, temperature=0.7)
 
@@ -399,6 +414,8 @@ class Dev3Agent(Agent):
             return os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         if LLM_PROVIDER == "minimax":
             return os.getenv("MINIMAX_MODEL_NAME", "MiniMax-M2.7-highspeed")
+        if LLM_PROVIDER in ("mimo", "xiaomi"):
+            return os.getenv("MIMO_LLM_MODEL", "mimo-v2.5")
         return LLM_MODEL
 
     # 阶段 28: 不再用 function_tool 走 recall_memory（auto-recall 直接拼 system prompt，
