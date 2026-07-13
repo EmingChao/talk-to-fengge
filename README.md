@@ -2,7 +2,7 @@
 
 [English](README_EN.md)
 
-**实时语音对话 + 音色克隆 + 人格注入，工程延迟 < 1 秒。**
+**实时语音/文字对话 + 音色克隆 + 人格注入。**
 
 和 B 站百万粉丝博主「峰哥亡命天涯」的 AI 分身实时语音聊天。不是文字转语音——是真的像打电话一样聊天，声音和性格都是峰哥的。
 
@@ -51,6 +51,28 @@
 - **TTS**：VoxCPM（推荐，开源，克隆效果最好）/ [MOSS-TTS](https://github.com/open-moss/moss-tts-nano)（CPU 可跑，兜底方案）/ Cartesia Sonic（云端，需 $5/月 Pro 订阅）/ MiniMax TTS
 
 ## 快速开始
+
+### Docker 服务器部署
+
+仓库已提供 `Dockerfile`、`docker-compose.yml`、LiveKit 配置和环境变量示例，可在 Linux 服务器部署：
+
+```bash
+cp .env.docker.example .env
+# 填写 .env 中的 LiveKit、Cartesia 和 MiMo 密钥
+docker compose config --quiet
+docker compose build worker
+docker compose up -d
+```
+
+生产环境还需要 HTTPS/WSS、域名和 WebRTC 防火墙端口。完整步骤见 [Docker 服务器部署指南](docs/docker-deployment.md)。
+
+Docker 部署默认使用：
+
+- STT：Cartesia `ink-whisper`
+- LLM：小米 `mimo-v2.5`，使用 Token Plan `tp-` 密钥
+- TTS：小米 `mimo-v2.5-tts-voiceclone`，使用独立的按量 API `sk-` 密钥
+
+页面同时支持麦克风和文字输入。文字输入后仍会播放克隆语音；TTS 异常或静音时，文字回复保持可用。
 
 ### 最简单的方式：让 AI 编程助手帮你配
 

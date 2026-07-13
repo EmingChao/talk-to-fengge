@@ -872,6 +872,7 @@ function bootTalkToMe() {
     // ---- 对话消息列表 ----
     const messageElements = new Map();
 
+    /** 限制页面保留的消息节点数量，避免长会话持续占用内存。 */
     function trimMessages() {
         while (messageList.children.length > MAX_VISIBLE_MESSAGES) {
             const oldest = messageList.firstElementChild;
@@ -883,6 +884,7 @@ function bootTalkToMe() {
         }
     }
 
+    /** 新增消息或按分段标识更新已有的增量消息。 */
     function upsertMessage(role, text, segmentId) {
         const content = String(text || '').trim();
         if (!content) return;
@@ -900,12 +902,14 @@ function bootTalkToMe() {
         conversationEl.scrollTop = conversationEl.scrollHeight;
     }
 
+    /** 将 LiveKit DataPacket 解码为结构化消息。 */
     function parseDataMessage(payload) {
         let text = '';
         try { text = new TextDecoder().decode(payload); } catch (_) { return null; }
         try { return JSON.parse(text); } catch (_) { return { message: text }; }
     }
 
+    /** 展示 Agent 主动发送的状态或兼容数据消息。 */
     function handleDataMessage(payload) {
         const data = parseDataMessage(payload);
         if (!data) return;
@@ -923,6 +927,7 @@ function bootTalkToMe() {
 
     // ---- 远端语音静音 ----
     let remoteMuted = localStorage.getItem('ttm-remote-muted') === 'true';
+    /** 将持久化的静音状态同步到媒体元素、增益节点和按钮。 */
     function applyRemoteMute() {
         remoteAudio.muted = remoteMuted;
         if (remoteGainNode) remoteGainNode.gain.value = remoteMuted ? 0 : 1;
@@ -942,6 +947,7 @@ function bootTalkToMe() {
     // ================================================================
     const TOKEN_URL = window.location.origin + '/token';
 
+    /** 从同源 Web 服务获取房间凭证和浏览器可访问的 LiveKit 地址。 */
     async function getConnectionInfo() {
         const identity = 'user-' + Math.random().toString(36).substring(2, 8);
         const resp = await fetch(TOKEN_URL, {
@@ -964,12 +970,14 @@ function bootTalkToMe() {
     let connecting = false;
     let localIdentity = '';
 
+    /** 根据房间连接状态启用或禁用文字输入。 */
     function setComposerEnabled(enabled) {
         messageInput.disabled = !enabled;
         sendButton.disabled = !enabled || !messageInput.value.trim();
         messageInput.placeholder = enabled ? '输入消息，Enter 发送' : '连接后输入消息';
     }
 
+    /** 注册 AI 与用户语音转写的原生 LiveKit 文本流处理器。 */
     function registerTextHandlers(activeRoom) {
         activeRoom.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
             try {
@@ -991,6 +999,7 @@ function bootTalkToMe() {
         });
     }
 
+    /** 通过 lk.chat 将用户文字发送到当前 AgentSession。 */
     async function sendMessage() {
         const text = messageInput.value.trim();
         if (!text) return;
