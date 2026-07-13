@@ -39,25 +39,12 @@
         align-items: center;
         padding: 20px 28px;
     }
-    #modelSelect {
-        pointer-events: auto;
-        appearance: none;
-        -webkit-appearance: none;
-        background: rgba(20, 20, 24, 0.55) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23999' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 14px center;
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 999px;
-        color: #e8e8f0;
-        font-size: 13px;
-        letter-spacing: 0.02em;
-        padding: 9px 34px 9px 16px;
-        cursor: pointer;
-        outline: none;
-        transition: border-color 0.25s, background-color 0.25s;
+    #modelLabel {
+        color: #f2f2f4;
+        font-size: 15px;
+        font-weight: 600;
+        text-shadow: 0 1px 10px rgba(0, 0, 0, 0.9);
     }
-    #modelSelect:hover { border-color: rgba(255, 255, 255, 0.25); }
-    #modelSelect option { background: #16161a; color: #e8e8f0; }
 
     #statusPill {
         display: flex;
@@ -106,24 +93,110 @@
     }
     #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-    /* ---------- Bottom controls ---------- */
+    /* ---------- 对话记录 ---------- */
+    #conversation {
+        position: fixed;
+        left: 50%;
+        bottom: 190px;
+        width: min(720px, calc(100vw - 40px));
+        max-height: min(46vh, 460px);
+        transform: translateX(-50%);
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        pointer-events: auto;
+        padding: 8px 4px;
+    }
+    #messageList {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-height: 24px;
+    }
+    .message {
+        width: fit-content;
+        max-width: min(82%, 560px);
+        padding: 10px 13px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px;
+        color: #f7f7f8;
+        font-size: 15px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        user-select: text;
+        -webkit-user-select: text;
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+    }
+    .message.user {
+        align-self: flex-end;
+        background: rgba(27, 96, 70, 0.78);
+        border-color: rgba(100, 215, 164, 0.28);
+    }
+    .message.assistant {
+        align-self: flex-start;
+        background: rgba(30, 30, 36, 0.78);
+    }
+    .message.system {
+        align-self: center;
+        max-width: 100%;
+        padding: 6px 10px;
+        color: #ffd699;
+        background: rgba(50, 38, 20, 0.72);
+        font-size: 13px;
+        text-align: center;
+    }
+
+    /* ---------- 底部控制区 ---------- */
     #bottomControls {
         position: fixed;
         bottom: 0; left: 0; right: 0;
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding-bottom: 44px;
-        gap: 14px;
+        padding: 0 20px max(20px, env(safe-area-inset-bottom));
+        gap: 10px;
     }
-    #micButton {
+    #composer {
         pointer-events: auto;
-        width: 72px; height: 72px;
-        border-radius: 50%;
-        border: 1.5px solid #444;
+        width: min(720px, calc(100vw - 40px));
+        min-height: 52px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 44px;
+        align-items: end;
+        gap: 8px;
+        padding: 6px;
+        background: rgba(20, 20, 24, 0.82);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 8px;
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+    }
+    #messageInput {
+        width: 100%;
+        min-height: 40px;
+        max-height: 112px;
+        resize: none;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: #fff;
+        padding: 10px 9px;
+        font: inherit;
+        font-size: 15px;
+        line-height: 20px;
+        user-select: text;
+        -webkit-user-select: text;
+    }
+    #messageInput::placeholder { color: rgba(255, 255, 255, 0.42); }
+    #messageInput:disabled { cursor: not-allowed; opacity: 0.55; }
+    #sendButton, #micButton, #muteButton {
+        pointer-events: auto;
+        width: 44px; height: 44px;
+        border-radius: 8px;
+        border: 1px solid #444;
         background: rgba(14, 14, 18, 0.6);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -131,48 +204,55 @@
         outline: none;
         transition: border-color 0.4s ease, box-shadow 0.5s ease, transform 0.3s ease, background 0.4s ease;
     }
-    #micButton svg {
-        width: 26px; height: 26px;
+    #sendButton svg, #micButton svg, #muteButton svg {
+        width: 21px; height: 21px;
         stroke: #cfcfd6;
         transition: stroke 0.4s ease;
     }
-    #micButton:hover { border-color: #666; transform: scale(1.04); }
-    #micButton:active { transform: scale(0.96); }
+    #sendButton:hover, #micButton:hover, #muteButton:hover { border-color: #777; }
+    #sendButton:active, #micButton:active, #muteButton:active { transform: scale(0.96); }
+    #sendButton:disabled { cursor: not-allowed; opacity: 0.4; }
+    #sendButton:not(:disabled) { border-color: rgba(100, 215, 164, 0.55); }
     #micButton.connected {
         border-color: #34c759;
         box-shadow: 0 0 28px rgba(52, 199, 89, 0.22), inset 0 0 14px rgba(52, 199, 89, 0.06);
     }
     #micButton.connected svg { stroke: #6fe08e; }
+    #muteButton.muted svg { stroke: #ff9f8f; }
     #micButton.speaking { animation: micPulse 2s ease-in-out infinite; }
     @keyframes micPulse {
         0%, 100% { transform: scale(1.0); }
         50%      { transform: scale(1.05); }
     }
 
+    #controlRow {
+        width: min(720px, calc(100vw - 40px));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+    }
     #timer {
         font-size: 13px;
         color: #fff;
         opacity: 0.4;
         font-variant-numeric: tabular-nums;
         letter-spacing: 0.08em;
-        height: 16px;
+        width: 54px;
+        text-align: center;
         transition: opacity 0.4s;
     }
-
-    #transcript {
-        font-size: 22px;
-        line-height: 1.5;
-        color: #fff;
-        max-width: 600px;
-        min-height: 33px;
-        text-align: center;
-        padding: 0 24px;
-        text-shadow: 0 1px 12px rgba(0, 0, 0, 0.8);
-        opacity: 0;
-        transition: opacity 0.3s ease;
+    @media (max-width: 640px) {
+        #topBar { padding: 16px; }
+        #conversation {
+            width: calc(100vw - 24px);
+            bottom: 178px;
+            max-height: 48vh;
+        }
+        #composer, #controlRow { width: calc(100vw - 24px); }
+        .message { max-width: 88%; font-size: 14px; }
+        #toast { max-width: calc(100vw - 24px); white-space: normal; text-align: center; }
     }
-    #transcript.active { opacity: 1; }
-    #transcript.idle   { opacity: 0.3; transition: opacity 1.2s ease; }
 </style>
 </head>
 <body>
@@ -181,9 +261,7 @@
 
 <div id="ui">
     <div id="topBar">
-        <select id="modelSelect">
-            <option value="minimax">峰哥 · MiniMax</option>
-        </select>
+        <div id="modelLabel">峰哥 · MiMo</div>
         <div id="statusPill">
             <span id="statusDot" class="ready"></span>
             <span id="statusText">就绪</span>
@@ -192,16 +270,37 @@
 
     <div id="toast"></div>
 
+    <div id="conversation" aria-live="polite" aria-label="对话记录">
+        <div id="messageList"></div>
+    </div>
+
     <div id="bottomControls">
-        <button id="micButton" aria-label="开始对话">
-            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <rect x="9" y="2.5" width="6" height="11.5" rx="3"></rect>
-                <path d="M5 11.5a7 7 0 0 0 14 0"></path>
-                <line x1="12" y1="18.5" x2="12" y2="21.5"></line>
-            </svg>
-        </button>
-        <div id="timer">00:00</div>
-        <div id="transcript"></div>
+        <div id="composer">
+            <textarea id="messageInput" rows="1" maxlength="2000" disabled placeholder="连接后输入消息"></textarea>
+            <button id="sendButton" disabled aria-label="发送消息" title="发送消息">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 2 11 13"></path>
+                    <path d="m22 2-7 20-4-9-9-4Z"></path>
+                </svg>
+            </button>
+        </div>
+        <div id="controlRow">
+            <button id="micButton" aria-label="连接对话" title="连接或断开对话">
+                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="2.5" width="6" height="11.5" rx="3"></rect>
+                    <path d="M5 11.5a7 7 0 0 0 14 0"></path>
+                    <line x1="12" y1="18.5" x2="12" y2="21.5"></line>
+                </svg>
+            </button>
+            <div id="timer">00:00</div>
+            <button id="muteButton" aria-label="静音语音回复" title="静音或恢复语音回复">
+                <svg class="soundOnIcon" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 5 6 9H2v6h4l5 4Z"></path>
+                    <path d="M15.5 8.5a5 5 0 0 1 0 7"></path>
+                    <path d="M18.5 5.5a9 9 0 0 1 0 13"></path>
+                </svg>
+            </button>
+        </div>
     </div>
 </div>
 
@@ -225,21 +324,23 @@ function bootTalkToMe() {
     const PARTICLE_MODE = 'abstract'; // 'abstract' | 'photo' — V3.6 暂回退到星空粒子效果
     const PARTICLE_COUNT = 5000;
 
-    const MODEL_NAMES = {
-        minimax: '峰哥',
-    };
+    const MODEL_NAME = '峰哥';
+    const MAX_VISIBLE_MESSAGES = 100;
 
     // ================================================================
     //  DOM
     // ================================================================
     const canvas = document.getElementById('scene');
-    const modelSelect = document.getElementById('modelSelect');
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
     const toastEl = document.getElementById('toast');
     const micButton = document.getElementById('micButton');
+    const muteButton = document.getElementById('muteButton');
+    const sendButton = document.getElementById('sendButton');
+    const messageInput = document.getElementById('messageInput');
+    const conversationEl = document.getElementById('conversation');
+    const messageList = document.getElementById('messageList');
     const timerEl = document.getElementById('timer');
-    const transcriptEl = document.getElementById('transcript');
     const remoteAudio = document.getElementById('remoteAudio');
 
     // ================================================================
@@ -596,6 +697,7 @@ function bootTalkToMe() {
     let analyser = null;
     let freqData = null;
     let remoteSourceNode = null;   // createMediaElementSource — once per element
+    let remoteGainNode = null;
     let micSourceNode = null;
 
     // smoothed levels (never feed raw FFT to the shader)
@@ -616,13 +718,13 @@ function bootTalkToMe() {
 
         // remote AI voice (primary, gain 1.0) — element output is rerouted
         // through the graph, so also connect to destination to stay audible
-        const remoteGain = audioContext.createGain();
-        remoteGain.gain.value = 1.0;
+        remoteGainNode = audioContext.createGain();
+        remoteGainNode.gain.value = remoteMuted ? 0 : 1;
         try {
             remoteSourceNode = audioContext.createMediaElementSource(remoteAudio);
-            remoteSourceNode.connect(remoteGain);
-            remoteGain.connect(analyser);
-            remoteGain.connect(audioContext.destination);
+            remoteSourceNode.connect(remoteGainNode);
+            remoteGainNode.connect(analyser);
+            remoteGainNode.connect(audioContext.destination);
         } catch (err) {
             console.warn('remote audio analyser hookup failed', err);
         }
@@ -728,25 +830,20 @@ function bootTalkToMe() {
         toastTimeout = setTimeout(() => toastEl.classList.remove('show'), 3000);
     }
 
-    function modelDisplayName() {
-        return MODEL_NAMES[modelSelect.value] || modelSelect.value;
-    }
-
     // states: ready | connecting | connected | disconnected | error
     function setStatus(state, customText) {
-        const name = modelDisplayName();
         if (state === 'ready') {
             statusDot.className = 'ready';
-            statusText.textContent = name + ' 就绪';
+            statusText.textContent = MODEL_NAME + ' 就绪';
         } else if (state === 'connecting') {
             statusDot.className = 'connecting';
-            statusText.textContent = name + ' 连接中...';
+            statusText.textContent = MODEL_NAME + ' 连接中...';
         } else if (state === 'connected') {
             statusDot.className = 'connected';
-            statusText.textContent = name + ' 对话中';
+            statusText.textContent = MODEL_NAME + ' 对话中';
         } else if (state === 'disconnected') {
             statusDot.className = 'ready';
-            statusText.textContent = name + ' 已断开';
+            statusText.textContent = MODEL_NAME + ' 已断开';
         } else {
             statusDot.className = 'error';
             statusText.textContent = customText || '出错了';
@@ -772,67 +869,85 @@ function bootTalkToMe() {
         timerInterval = null;
     }
 
-    // ---- transcription ----
-    let transcriptIdleTimeout = null;
-    function showTranscript(text) {
-        if (!text) return;
-        transcriptEl.textContent = text;
-        transcriptEl.classList.remove('idle');
-        // restart fade-in
-        transcriptEl.classList.remove('active');
-        void transcriptEl.offsetWidth;
-        transcriptEl.classList.add('active');
-        clearTimeout(transcriptIdleTimeout);
-        transcriptIdleTimeout = setTimeout(() => {
-            transcriptEl.classList.add('idle');
-        }, 6000);
+    // ---- 对话消息列表 ----
+    const messageElements = new Map();
+
+    function trimMessages() {
+        while (messageList.children.length > MAX_VISIBLE_MESSAGES) {
+            const oldest = messageList.firstElementChild;
+            if (!oldest) break;
+            for (const [key, value] of messageElements.entries()) {
+                if (value === oldest) messageElements.delete(key);
+            }
+            oldest.remove();
+        }
+    }
+
+    function upsertMessage(role, text, segmentId) {
+        const content = String(text || '').trim();
+        if (!content) return;
+        const key = segmentId || role + '-' + Date.now() + '-' + Math.random();
+        let element = messageElements.get(key);
+        if (!element) {
+            element = document.createElement('div');
+            element.className = 'message ' + role;
+            element.dataset.segmentId = key;
+            messageElements.set(key, element);
+            messageList.appendChild(element);
+        }
+        element.textContent = content;
+        trimMessages();
+        conversationEl.scrollTop = conversationEl.scrollHeight;
     }
 
     function parseDataMessage(payload) {
         let text = '';
-        try { text = new TextDecoder().decode(payload); } catch (_) { return ''; }
-        try {
-            const obj = JSON.parse(text);
-            if (typeof obj === 'string') return obj;
-            return obj.text || obj.transcript || obj.transcription || obj.message || '';
-        } catch (_) {
-            return text;
-        }
+        try { text = new TextDecoder().decode(payload); } catch (_) { return null; }
+        try { return JSON.parse(text); } catch (_) { return { message: text }; }
     }
 
-    // ---- model selector ----
-    (function initModelSelect() {
-        const saved = localStorage.getItem('ttm-llm-provider');
-        if (saved && MODEL_NAMES[saved]) modelSelect.value = saved;
-        modelSelect.addEventListener('change', () => {
-            localStorage.setItem('ttm-llm-provider', modelSelect.value);
-            if (connected) {
-                showToast('切换后请重连');
-            } else {
-                setStatus(livekitReady ? 'ready' : 'error', 'LiveKit 未启动');
-            }
-        });
-    })();
+    function handleDataMessage(payload) {
+        const data = parseDataMessage(payload);
+        if (!data) return;
+        const message = typeof data === 'string'
+            ? data
+            : data.message || data.text || data.transcript || data.transcription || '';
+        if (!message) return;
+        if (data.code === 'tts_unavailable') {
+            upsertMessage('system', message, 'tts-unavailable-' + Date.now());
+            showToast(message);
+            return;
+        }
+        upsertMessage('assistant', message);
+    }
+
+    // ---- 远端语音静音 ----
+    let remoteMuted = localStorage.getItem('ttm-remote-muted') === 'true';
+    function applyRemoteMute() {
+        remoteAudio.muted = remoteMuted;
+        if (remoteGainNode) remoteGainNode.gain.value = remoteMuted ? 0 : 1;
+        muteButton.classList.toggle('muted', remoteMuted);
+        muteButton.setAttribute('aria-label', remoteMuted ? '恢复语音回复' : '静音语音回复');
+        muteButton.title = remoteMuted ? '恢复语音回复' : '静音语音回复';
+    }
+
+    muteButton.addEventListener('click', () => {
+        remoteMuted = !remoteMuted;
+        localStorage.setItem('ttm-remote-muted', String(remoteMuted));
+        applyRemoteMute();
+    });
 
     // ================================================================
-    //  LIVEKIT CONNECTION  (tested, working logic — do not modify)
+    //  LIVEKIT 连接
     // ================================================================
     const TOKEN_URL = window.location.origin + '/token';
-    const LIVEKIT_URL = 'ws://127.0.0.1:7880';
 
-    function getRoomName() {
-        const sel = document.getElementById('modelSelect');
-        const v = sel ? sel.value : 'minimax';
-        return 'ttm-' + v + '-room';
-    }
-
-    async function getToken() {
+    async function getConnectionInfo() {
         const identity = 'user-' + Math.random().toString(36).substring(2, 8);
-        const roomName = getRoomName();
         const resp = await fetch(TOKEN_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ room: roomName, identity: identity, name: '粉丝' }),
+            body: JSON.stringify({ room: 'ttm-mimo-room', identity: identity, name: '粉丝' }),
         });
         if (!resp.ok) {
             const text = await resp.text();
@@ -840,14 +955,76 @@ function bootTalkToMe() {
         }
         const data = await resp.json();
         if (!data.token) throw new Error('Token 为空');
-        return data.token;
+        if (!data.livekit_url) throw new Error('LiveKit 公网地址为空');
+        return data;
     }
 
     let room = null;
     let connected = false;
     let connecting = false;
     let localIdentity = '';
-    let livekitReady = false;
+
+    function setComposerEnabled(enabled) {
+        messageInput.disabled = !enabled;
+        sendButton.disabled = !enabled || !messageInput.value.trim();
+        messageInput.placeholder = enabled ? '输入消息，Enter 发送' : '连接后输入消息';
+    }
+
+    function registerTextHandlers(activeRoom) {
+        activeRoom.registerTextStreamHandler('lk.transcription', async (reader, participantInfo) => {
+            try {
+                const text = await reader.readAll();
+                const attributes = reader.info && reader.info.attributes
+                    ? reader.info.attributes
+                    : {};
+                const segmentId = attributes['lk.segment_id']
+                    || (reader.info && reader.info.id)
+                    || 'segment-' + Date.now() + '-' + Math.random();
+                const identity = participantInfo && participantInfo.identity
+                    ? participantInfo.identity
+                    : String(participantInfo || '');
+                const role = identity === localIdentity ? 'user' : 'assistant';
+                upsertMessage(role, text, segmentId);
+            } catch (error) {
+                console.warn('transcription stream error', error);
+            }
+        });
+    }
+
+    async function sendMessage() {
+        const text = messageInput.value.trim();
+        if (!text) return;
+        if (!connected || !room) {
+            showToast('请先连接对话');
+            return;
+        }
+
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+        sendButton.disabled = true;
+        try {
+            await room.localParticipant.sendText(text, { topic: 'lk.chat' });
+            upsertMessage('user', text, 'typed-' + Date.now());
+        } catch (error) {
+            console.error('send text failed', error);
+            messageInput.value = text;
+            sendButton.disabled = false;
+            showToast('消息发送失败，请重试');
+        }
+    }
+
+    sendButton.addEventListener('click', sendMessage);
+    messageInput.addEventListener('input', () => {
+        sendButton.disabled = !connected || !messageInput.value.trim();
+        messageInput.style.height = 'auto';
+        messageInput.style.height = Math.min(messageInput.scrollHeight, 112) + 'px';
+    });
+    messageInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendMessage();
+        }
+    });
 
     async function connect() {
         if (connected || connecting) return;
@@ -856,15 +1033,18 @@ function bootTalkToMe() {
         setStatus('connecting');
 
         try {
-            const token = await getToken();
+            const connectionInfo = await getConnectionInfo();
 
             room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+            registerTextHandlers(room);
 
             room.on(LivekitClient.RoomEvent.Connected, () => {
                 connected = true;
                 localIdentity = room.localParticipant ? room.localParticipant.identity : '';
                 setStatus('connected');
                 micButton.classList.add('connected');
+                micButton.setAttribute('aria-label', '断开对话');
+                setComposerEnabled(true);
                 startTimer();
             });
 
@@ -873,6 +1053,8 @@ function bootTalkToMe() {
                 connecting = false;
                 setStatus('disconnected');
                 micButton.classList.remove('connected', 'speaking');
+                micButton.setAttribute('aria-label', '连接对话');
+                setComposerEnabled(false);
                 stopTimer();
                 disconnectMicFromAnalyser();
                 remoteAudio.srcObject = null;
@@ -882,7 +1064,7 @@ function bootTalkToMe() {
             room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
                 if (track.kind !== LivekitClient.Track.Kind.Audio) return;
                 track.attach(remoteAudio);
-                remoteAudio.muted = false;
+                applyRemoteMute();
                 const p = remoteAudio.play ? remoteAudio.play() : null;
                 if (p && typeof p.catch === 'function') {
                     p.catch((err) => console.warn('remote audio autoplay blocked', err));
@@ -901,11 +1083,10 @@ function bootTalkToMe() {
             });
 
             room.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
-                const text = parseDataMessage(payload);
-                if (text) showTranscript(text);
+                handleDataMessage(payload);
             });
 
-            await room.connect(LIVEKIT_URL, token);
+            await room.connect(connectionInfo.livekit_url, connectionInfo.token);
 
             try {
                 await room.localParticipant.setMicrophoneEnabled(true);
@@ -917,7 +1098,7 @@ function bootTalkToMe() {
                 }
             } catch (micErr) {
                 console.warn('microphone error', micErr);
-                showToast('请允许浏览器使用麦克风');
+                showToast('麦克风不可用，仍可输入文字交流');
             }
 
             connecting = false;
@@ -927,6 +1108,7 @@ function bootTalkToMe() {
             connected = false;
             setStatus('error', '连接失败');
             micButton.classList.remove('connected', 'speaking');
+            setComposerEnabled(false);
             if (room) { try { room.disconnect(); } catch (_) {} room = null; }
         }
     }
@@ -937,6 +1119,8 @@ function bootTalkToMe() {
         connecting = false;
         setStatus('disconnected');
         micButton.classList.remove('connected', 'speaking');
+        micButton.setAttribute('aria-label', '连接对话');
+        setComposerEnabled(false);
         stopTimer();
         disconnectMicFromAnalyser();
     }
@@ -945,25 +1129,9 @@ function bootTalkToMe() {
         connected ? disconnect() : connect();
     });
 
-    // startup: check LiveKit availability
-    function checkLiveKit() {
-        fetch(LIVEKIT_URL.replace('ws://', 'http://'))
-            .then((r) => r.text())
-            .then((t) => {
-                if (t.includes('OK')) {
-                    livekitReady = true;
-                    setStatus('ready');
-                } else {
-                    setStatus('error', 'LiveKit 未启动');
-                }
-            })
-            .catch(() => {
-                setStatus('error', 'LiveKit 未启动');
-            });
-    }
-
+    applyRemoteMute();
+    setComposerEnabled(false);
     setStatus('ready');
-    checkLiveKit();
 }
 
 if (window.THREE) bootTalkToMe();
