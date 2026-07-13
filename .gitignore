@@ -1,5 +1,6 @@
 # 环境与密钥
 .env.local
+.env
 runpod_config.env
 
 # Python
