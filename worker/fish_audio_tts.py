@@ -17,6 +17,7 @@ from livekit.agents import (
 )
 from livekit.agents.types import APIConnectOptions, DEFAULT_API_CONNECT_OPTIONS
 from livekit.agents.tts import ChunkedStream, TTS
+from worker.fengge_prosody import FenggeProsodyPlanner
 
 FISH_AUDIO_BASE_URL = "https://api.fish.audio/v1"
 FISH_AUDIO_MODEL = "s2.1-pro-free"
@@ -56,6 +57,8 @@ class FishAudioTTS(TTS):
         chunk_length: int = 300,
         min_chunk_length: int = 50,
         speed: float = 1.0,
+        prosody_mode: str = "persona",
+        prosody_intensity: str = "subtle",
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         """校验 Fish Audio 配置并初始化 LiveKit TTS 能力。"""
@@ -102,6 +105,10 @@ class FishAudioTTS(TTS):
             speed=speed,
         )
         self._client = http_client
+        self._prosody_planner = FenggeProsodyPlanner(
+            mode=prosody_mode,
+            intensity=prosody_intensity,
+        )
 
     @property
     def provider(self) -> str:
@@ -145,8 +152,9 @@ class FishAudioTTS(TTS):
 
     def _build_payload(self, text: str) -> dict[str, object]:
         """构造 Fish Audio 官方 TTS JSON 请求体。"""
+        decorated_text = self._decorate_text(text)
         return {
-            "text": text,
+            "text": decorated_text,
             "reference_id": self._opts.reference_id,
             "format": "pcm",
             "sample_rate": self._opts.sample_rate,
@@ -157,6 +165,26 @@ class FishAudioTTS(TTS):
             "condition_on_previous_chunks": True,
             "prosody": {"speed": self._opts.speed, "volume": 0},
         }
+
+    def _decorate_text(self, text: str) -> str:
+        """生成仅供 TTS 使用的文本副本，异常时安全回退原文。"""
+        try:
+            decorated = self._prosody_planner.decorate(text)
+        except Exception as exc:
+            print(
+                f"[fish_audio_tts] prosody fallback error={type(exc).__name__} "
+                f"text_len={len(text)}",
+                flush=True,
+            )
+            return text
+
+        if decorated != text:
+            tag = decorated.split("]", 1)[0] + "]"
+            print(
+                f"[fish_audio_tts] prosody tag={tag} text_len={len(text)}",
+                flush=True,
+            )
+        return decorated
 
     async def iter_audio(self, text: str) -> AsyncIterator[tuple[str, bytes]]:
         """请求 Fish Audio，并按完整 PCM16 采样持续产出音频。"""

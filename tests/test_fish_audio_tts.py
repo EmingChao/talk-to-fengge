@@ -124,6 +124,21 @@ class FishAudioTTSConfigTest(unittest.TestCase):
                 speed=2.1,
             )
 
+    def test_invalid_prosody_config_fails_at_startup(self) -> None:
+        """未知人格语气模式和强度必须在启动阶段失败。"""
+        with self.assertRaisesRegex(RuntimeError, "FISH_AUDIO_PROSODY_MODE"):
+            FishAudioTTS(
+                api_key="test-key",
+                reference_id="voice-id",
+                prosody_mode="auto",
+            )
+        with self.assertRaisesRegex(RuntimeError, "FISH_AUDIO_PROSODY_INTENSITY"):
+            FishAudioTTS(
+                api_key="test-key",
+                reference_id="voice-id",
+                prosody_intensity="dramatic",
+            )
+
     def test_build_payload_uses_reference_and_pcm_stream_options(self) -> None:
         """请求体必须使用指定音色、24 kHz PCM 和低延迟分块参数。"""
         provider = FishAudioTTS(api_key="test-key", reference_id="voice-id")
@@ -140,6 +155,26 @@ class FishAudioTTSConfigTest(unittest.TestCase):
         self.assertTrue(payload["normalize"])
         self.assertTrue(payload["condition_on_previous_chunks"])
         self.assertEqual(payload["prosody"], {"speed": 1.0, "volume": 0})
+
+    def test_build_payload_decorates_only_internal_text_copy(self) -> None:
+        """人格标签只能进入 Fish Audio 请求体，原始字符串必须保持不变。"""
+        provider = FishAudioTTS(api_key="test-key", reference_id="voice-id")
+        original = "这是个好事儿啊"
+
+        payload = provider._build_payload(original)
+
+        self.assertEqual(original, "这是个好事儿啊")
+        self.assertEqual(payload["text"], "[confident] 这是个好事儿啊")
+
+    def test_build_payload_off_mode_keeps_original_text(self) -> None:
+        """关闭人格语气时请求体必须使用原始文字。"""
+        provider = FishAudioTTS(
+            api_key="test-key",
+            reference_id="voice-id",
+            prosody_mode="off",
+        )
+        payload = provider._build_payload("终于跑通了")
+        self.assertEqual(payload["text"], "终于跑通了")
 
 
 class FishAudioTTSRequestTest(unittest.IsolatedAsyncioTestCase):
@@ -380,6 +415,29 @@ class FishAudioTTSFactoryTest(unittest.TestCase):
         self.assertIs(instance, expected)
         self.assertEqual(label, "mimo:test")
         build_mimo.assert_called_once_with()
+
+    @patch.dict(
+        os.environ,
+        {
+            "FISH_AUDIO_API_KEY": "test-key",
+            "FISH_AUDIO_REFERENCE_ID": "voice-id",
+            "FISH_AUDIO_PROSODY_MODE": "off",
+            "FISH_AUDIO_PROSODY_INTENSITY": "subtle",
+        },
+        clear=False,
+    )
+    @patch("worker.fish_audio_tts.FishAudioTTS")
+    def test_factory_passes_prosody_config(self, fish_tts_class) -> None:
+        """工厂必须把人格语气环境变量传给 Fish Audio provider。"""
+        fish_tts_class.return_value = object()
+
+        build_tts("fish_audio", "http://moss", "fengge")
+
+        self.assertEqual(fish_tts_class.call_args.kwargs["prosody_mode"], "off")
+        self.assertEqual(
+            fish_tts_class.call_args.kwargs["prosody_intensity"],
+            "subtle",
+        )
 
 
 if __name__ == "__main__":

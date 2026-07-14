@@ -145,6 +145,11 @@ def _build_fish_audio() -> Tuple[object, str]:
         os.getenv("FISH_AUDIO_MIN_CHUNK_LENGTH", "50").strip()
     )
     speed = float(os.getenv("FISH_AUDIO_SPEED", "1.0").strip())
+    prosody_mode = os.getenv("FISH_AUDIO_PROSODY_MODE", "persona").strip()
+    prosody_intensity = os.getenv(
+        "FISH_AUDIO_PROSODY_INTENSITY",
+        "subtle",
+    ).strip()
 
     tts = FishAudioTTS(
         api_key=api_key,
@@ -156,6 +161,8 @@ def _build_fish_audio() -> Tuple[object, str]:
         chunk_length=chunk_length,
         min_chunk_length=min_chunk_length,
         speed=speed,
+        prosody_mode=prosody_mode,
+        prosody_intensity=prosody_intensity,
     )
     label = f"fish_audio:{model}/{reference_id[:12]}/{sample_rate}Hz/{latency}"
     return tts, label

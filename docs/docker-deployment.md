@@ -57,6 +57,8 @@ openssl rand -hex 32
 
 - `FISH_AUDIO_API_KEY` 使用 Fish Audio 平台生成的 API Key。
 - `FISH_AUDIO_MODEL=s2.1-pro-free` 和峰哥音色 ID 已写入示例配置。
+- `FISH_AUDIO_PROSODY_MODE=persona` 默认按峰哥人格为 TTS 内部文本添加克制的语气标签，标签不会显示在页面、聊天记录或记忆中。
+- 如需完全关闭人格语气标签，设置 `FISH_AUDIO_PROSODY_MODE=off`；当前强度固定为 `FISH_AUDIO_PROSODY_INTENSITY=subtle`。
 - API Key 仍必须由服务器 `.env` 提供，不能写入仓库。
 
 MiMo LLM 继续使用 Token Plan：
