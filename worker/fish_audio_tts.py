@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -138,7 +139,8 @@ class FishAudioTTS(TTS):
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(120.0, connect=15.0),
-                trust_env=False,
+                trust_env=True,
+                proxy=os.environ.get("EGRESS_PROXY_URL"),
                 http2=False,
                 limits=httpx.Limits(max_connections=4, max_keepalive_connections=2),
             )

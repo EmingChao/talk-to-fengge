@@ -6,7 +6,8 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
 
 ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 
 COPY pyproject.toml ./
 RUN uv sync --no-dev --no-install-project
