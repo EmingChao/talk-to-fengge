@@ -195,7 +195,7 @@ os.environ["AGENT_NAME"] = AGENT_NAME  # 阶段 29: 把推出来的 AGENT_NAME �
 AGENT_PROMPT = os.getenv("AGENT_INSTRUCTIONS", "").strip()
 MOSS_TTS_URL = os.getenv("MOSS_TTS_URL", "http://127.0.0.1:18083/v1/audio/speech").strip()
 MOSS_VOICE_PROFILE = os.getenv("MOSS_VOICE_PROFILE", "ye-local").strip()
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "mimo").strip().lower()
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "fish_audio").strip().lower()
 TEXT_CHAT_TOPIC = "talk-to-fengge.chat"
 MAX_TEXT_INPUT_CHARS = 2000
 MEMORY_SESSION_PREFIX = os.getenv("MEMORY_SESSION_PREFIX", "dev3-pipeline")
@@ -347,7 +347,7 @@ class Dev3Agent(Agent):
         stt_instance = self._build_stt()
         # 阶段 29: LLM 按 LLM_PROVIDER env 选 gemini / deepseek / minimax
         llm_instance = self._build_llm()
-        # TTS 按 TTS_PROVIDER 选择，部署环境默认使用 MiMo VoiceClone。
+        # 部署环境默认使用 Fish Audio，可通过 TTS_PROVIDER=mimo 切回 MiMo。
         tts_instance, tts_label = build_tts(TTS_PROVIDER, MOSS_TTS_URL, MOSS_VOICE_PROFILE)
         vad_instance = EnergyVAD(
             speech_threshold=500,

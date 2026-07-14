@@ -43,7 +43,7 @@ LIVEKIT_PUBLIC_URL=ws://服务器公网IP:7880
 CARTESIA_API_KEY=Cartesia密钥
 
 MIMO_LLM_API_KEY=TokenPlan密钥
-MIMO_TTS_API_KEY=小米按量API密钥
+FISH_AUDIO_API_KEY=Fish Audio密钥
 ```
 
 可以在服务器上生成 LiveKit 凭证：
@@ -53,10 +53,15 @@ openssl rand -hex 12
 openssl rand -hex 32
 ```
 
-MiMo 的两种密钥不能混用：
+默认 TTS 使用 Fish Audio：
+
+- `FISH_AUDIO_API_KEY` 使用 Fish Audio 平台生成的 API Key。
+- `FISH_AUDIO_MODEL=s2.1-pro-free` 和峰哥音色 ID 已写入示例配置。
+- API Key 仍必须由服务器 `.env` 提供，不能写入仓库。
+
+MiMo LLM 继续使用 Token Plan：
 
 - `MIMO_LLM_API_KEY` 使用 Token Plan 的 `tp-` 密钥，Base URL 为 Token Plan 地址。
-- `MIMO_TTS_API_KEY` 使用按量 API 的 `sk-` 密钥，Base URL 为 `https://api.xiaomimimo.com/v1`。
 
 真实密钥只能放在服务器 `.env`，不能写入 Dockerfile、Compose、前端文件或 Git。
 
@@ -127,6 +132,7 @@ docker compose logs -f livekit worker web
 
 - LiveKit 健康检查通过。
 - Worker 以 `talk-to-me-mimo` 注册。
+- Worker 日志出现 `[tts_factory] loaded fish_audio:s2.1-pro-free`。
 - Web 监听 `0.0.0.0:8766`。
 - 浏览器请求 `/token` 后，日志出现房间创建和 Agent dispatch。
 
@@ -155,6 +161,22 @@ docker compose up -d
 
 回滚时切回已知可用的 Git commit，再执行相同的构建和启动命令。`.env` 不受 Git 管理，不需要重复填写。
 
+如果只需要把 TTS 切回小米 MiMo，无需回滚代码。在服务器 `.env` 中配置：
+
+```env
+TTS_PROVIDER=mimo
+MIMO_TTS_BASE_URL=https://api.xiaomimimo.com/v1
+MIMO_TTS_API_KEY=小米按量API密钥
+MIMO_TTS_MODEL=mimo-v2.5-tts-voiceclone
+MIMO_TTS_VOICE_FILE=assets/voice_samples/fengge_ref.wav
+```
+
+随后重新创建 Worker：
+
+```bash
+docker compose up -d --force-recreate worker
+```
+
 ## 8. 常见问题
 
 ### 页面能打开但连接失败
@@ -175,7 +197,7 @@ docker compose logs --tail=200 worker web
 
 ### 文字正常但没有声音
 
-先确认未点击静音，再查看 Worker 中的 `[mimo_tts]`、HTTP 状态码和超时日志。`401` 通常表示误用了 Token Plan 密钥或按量密钥无效。
+先确认未点击静音，再查看 Worker 中的 `[fish_audio_tts]`、HTTP 状态码和超时日志。`401` 或 `403` 通常表示 `FISH_AUDIO_API_KEY` 无效或无权限；“没有音频”表示供应商返回成功但响应体为空。若已切回 MiMo，则查看 `[mimo_tts]` 日志，并确认没有把 Token Plan 密钥用于 TTS。
 
 ### 有文字输入但 LLM 不回复
 

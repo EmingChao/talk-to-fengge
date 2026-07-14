@@ -27,7 +27,7 @@
 - Create: `tests/test_fish_audio_tts.py`
 - Create: `worker/fish_audio_tts.py`
 
-- [ ] **Step 1: 编写配置校验和请求体失败测试**
+- [x] **Step 1: 编写配置校验和请求体失败测试**
 
 在 `tests/test_fish_audio_tts.py` 中使用 `unittest`，先定义期望接口：
 
@@ -55,13 +55,13 @@ class FishAudioTTSConfigTest(unittest.TestCase):
 
 同时覆盖无效 Base URL、空模型、空音色 ID、不支持的采样率、延迟模式、分块范围和语速范围。
 
-- [ ] **Step 2: 运行测试并确认因 provider 不存在而失败**
+- [x] **Step 2: 运行测试并确认因 provider 不存在而失败**
 
 Run: `python -m unittest tests.test_fish_audio_tts.FishAudioTTSConfigTest -v`
 
 Expected: FAIL，错误为 `ModuleNotFoundError: No module named 'worker.fish_audio_tts'`。
 
-- [ ] **Step 3: 实现最小配置对象与请求体**
+- [x] **Step 3: 实现最小配置对象与请求体**
 
 在 `worker/fish_audio_tts.py` 创建以下结构，所有方法添加中文说明和关键流程注释：
 
@@ -113,7 +113,7 @@ class FishAudioTTS(TTS):
 
 采样率只允许 `{8000, 16000, 24000, 32000, 44100}`，延迟只允许 `low/balanced/normal`，`chunk_length` 限制为 100 至 300，`min_chunk_length` 限制为 0 至 100，语速限制为 0.5 至 2.0。
 
-- [ ] **Step 4: 运行配置测试并确认通过**
+- [x] **Step 4: 运行配置测试并确认通过**
 
 Run: `python -m unittest tests.test_fish_audio_tts.FishAudioTTSConfigTest -v`
 
@@ -125,7 +125,7 @@ Expected: PASS，全部配置和请求体测试成功。
 - Modify: `tests/test_fish_audio_tts.py`
 - Modify: `worker/fish_audio_tts.py`
 
-- [ ] **Step 1: 编写 HTTP 流和错误失败测试**
+- [x] **Step 1: 编写 HTTP 流和错误失败测试**
 
 使用 `httpx.MockTransport` 与自定义 `httpx.AsyncByteStream`，不访问外网：
 
@@ -170,13 +170,13 @@ class FishAudioTTSRequestTest(unittest.IsolatedAsyncioTestCase):
 
 继续增加空文本、200 空响应、最终残留单字节、401/500、`httpx.TimeoutException` 和 `httpx.ConnectError` 测试，并断言分别映射为 `APIError`、`APIStatusError`、`APITimeoutError` 与 `APIConnectionError`。
 
-- [ ] **Step 2: 运行请求测试并确认失败原因是方法未实现**
+- [x] **Step 2: 运行请求测试并确认失败原因是方法未实现**
 
 Run: `python -m unittest tests.test_fish_audio_tts.FishAudioTTSRequestTest -v`
 
 Expected: FAIL，错误指向 `iter_audio`、`synthesize` 或资源关闭方法缺失。
 
-- [ ] **Step 3: 实现流式请求、音频对齐与 LiveKit 推送**
+- [x] **Step 3: 实现流式请求、音频对齐与 LiveKit 推送**
 
 在 `FishAudioTTS` 中实现 `provider`、`model`、`synthesize`、`_get_client`、`aclose` 和 `iter_audio`；新增 `_FishAudioChunkedStream`：
 
@@ -228,7 +228,7 @@ async def iter_audio(self, text: str) -> AsyncIterator[tuple[str, bytes]]:
 
 `_FishAudioChunkedStream._run()` 在收到首个音频块时初始化 `AudioEmitter`，随后立即 `push()` 每个对齐后的 PCM 块，不做整句缓冲。
 
-- [ ] **Step 4: 运行 Fish Audio 全部单测并确认通过**
+- [x] **Step 4: 运行 Fish Audio 全部单测并确认通过**
 
 Run: `python -m unittest tests.test_fish_audio_tts -v`
 
@@ -241,7 +241,7 @@ Expected: PASS，配置、请求、流式和错误测试全部成功。
 - Modify: `worker/tts_factory.py`
 - Modify: `worker/agent.py`
 
-- [ ] **Step 1: 编写工厂选择失败测试**
+- [x] **Step 1: 编写工厂选择失败测试**
 
 ```python
 class FishAudioTTSFactoryTest(unittest.TestCase):
@@ -270,13 +270,13 @@ class FishAudioTTSFactoryTest(unittest.TestCase):
 
 另增加 `build_tts("")` 默认选择 Fish Audio、缺少 Key 和音色 ID 时直接失败的测试。
 
-- [ ] **Step 2: 运行工厂测试并确认失败**
+- [x] **Step 2: 运行工厂测试并确认失败**
 
 Run: `python -m unittest tests.test_fish_audio_tts.FishAudioTTSFactoryTest -v`
 
 Expected: FAIL，当前工厂尚不认识 `fish_audio`，空 provider 仍选择 `mimo`。
 
-- [ ] **Step 3: 实现 Fish Audio 工厂与默认值**
+- [x] **Step 3: 实现 Fish Audio 工厂与默认值**
 
 在 `worker/tts_factory.py` 新增 `_build_fish_audio()`，读取全部 `FISH_AUDIO_*` 环境变量并实例化 `FishAudioTTS`。`build_tts()` 将空 provider 归一化为 `fish_audio`，`fish_audio/fish` 直接创建 Fish Audio 且失败时不降级；现有 `mimo/xiaomi` 分支保持不变。
 
@@ -288,7 +288,7 @@ TTS_PROVIDER = os.getenv("TTS_PROVIDER", "fish_audio").strip().lower()
 
 并把启动处注释改为“部署环境默认使用 Fish Audio，可通过 `TTS_PROVIDER=mimo` 切回 MiMo”。
 
-- [ ] **Step 4: 运行工厂与全部 Fish Audio 测试**
+- [x] **Step 4: 运行工厂与全部 Fish Audio 测试**
 
 Run: `python -m unittest tests.test_fish_audio_tts -v`
 
@@ -302,7 +302,7 @@ Expected: PASS，Fish Audio 默认值、别名和 MiMo 回切全部成功。
 - Modify: `docker-compose.yml`
 - Modify: `docs/docker-deployment.md`
 
-- [ ] **Step 1: 更新示例环境变量**
+- [x] **Step 1: 更新示例环境变量**
 
 把两个示例文件的默认 TTS 配置改为：
 
@@ -321,7 +321,7 @@ FISH_AUDIO_SPEED=1.0
 
 将现有 `MIMO_TTS_*` 配置移到“可选：切回小米 MiMo TTS”小节，不删除任何配置项。
 
-- [ ] **Step 2: 让 Compose 尊重服务器环境配置**
+- [x] **Step 2: 让 Compose 尊重服务器环境配置**
 
 修改 worker 环境：
 
@@ -335,7 +335,7 @@ environment:
 
 保留 Agent 名称，避免改变 Web dispatch 契约。
 
-- [ ] **Step 3: 更新服务器部署指南**
+- [x] **Step 3: 更新服务器部署指南**
 
 文档必须说明：
 
@@ -346,6 +346,8 @@ environment:
 - 回切 MiMo 时设置 `TTS_PROVIDER=mimo` 并填写原有 `MIMO_TTS_*` 配置。
 
 - [ ] **Step 4: 检查 Compose 展开和配置引用**
+
+本机没有 Docker CLI，已完成配置引用静态检查；服务器部署前仍需执行本步骤的 Compose 渲染命令。
 
 Run: `docker compose --env-file .env.docker.example config --quiet`
 
@@ -360,19 +362,19 @@ Expected: 只允许在明确说明“切回 MiMo”的文档或注释中出现�
 **Files:**
 - Verify: all modified files
 
-- [ ] **Step 1: 执行 Python 编译检查**
+- [x] **Step 1: 执行 Python 编译检查**
 
 Run: `python -m compileall -q worker tests/test_fish_audio_tts.py`
 
 Expected: exit 0。
 
-- [ ] **Step 2: 执行不访问外网的测试集**
+- [x] **Step 2: 执行不访问外网的测试集**
 
 Run: `python -m unittest tests.test_fish_audio_tts tests.test_runtime_env tests.test_moss_tts -v`
 
 Expected: PASS，0 failures，0 errors。
 
-- [ ] **Step 3: 检查差异和敏感信息**
+- [x] **Step 3: 检查差异和敏感信息**
 
 Run: `git diff --check`
 

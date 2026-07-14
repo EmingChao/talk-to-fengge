@@ -3,7 +3,7 @@
 设计目标：
 - 单一入口 build_tts(provider, ...) -> (tts_instance, label)
 - 各 provider 互不耦合，加新 provider 只改这里
-- 旧 provider 仍可降级到 MOSS；MiMo 配置错误直接报告，由文字通道兜底
+- 旧 provider 仍可降级到 MOSS；Fish Audio 与 MiMo 配置错误直接报告
 """
 
 from __future__ import annotations
@@ -124,6 +124,43 @@ def _build_mimo() -> Tuple[object, str]:
     return tts, f"mimo:{model}/{voice_file.name}/24000Hz"
 
 
+def _build_fish_audio() -> Tuple[object, str]:
+    """创建 Fish Audio 流式音色克隆 TTS。"""
+    from worker.fish_audio_tts import FishAudioTTS
+
+    api_key = os.getenv("FISH_AUDIO_API_KEY", "").strip()
+    base_url = os.getenv(
+        "FISH_AUDIO_BASE_URL",
+        "https://api.fish.audio/v1",
+    ).strip()
+    model = os.getenv("FISH_AUDIO_MODEL", "s2.1-pro-free").strip()
+    reference_id = os.getenv(
+        "FISH_AUDIO_REFERENCE_ID",
+        "9344a2478df54929a786395f558b1267",
+    ).strip()
+    sample_rate = int(os.getenv("FISH_AUDIO_SAMPLE_RATE", "24000").strip())
+    latency = os.getenv("FISH_AUDIO_LATENCY", "balanced").strip()
+    chunk_length = int(os.getenv("FISH_AUDIO_CHUNK_LENGTH", "300").strip())
+    min_chunk_length = int(
+        os.getenv("FISH_AUDIO_MIN_CHUNK_LENGTH", "50").strip()
+    )
+    speed = float(os.getenv("FISH_AUDIO_SPEED", "1.0").strip())
+
+    tts = FishAudioTTS(
+        api_key=api_key,
+        base_url=base_url,
+        model=model,
+        reference_id=reference_id,
+        sample_rate=sample_rate,
+        latency=latency,
+        chunk_length=chunk_length,
+        min_chunk_length=min_chunk_length,
+        speed=speed,
+    )
+    label = f"fish_audio:{model}/{reference_id[:12]}/{sample_rate}Hz/{latency}"
+    return tts, label
+
+
 def _build_moss(moss_url: str, moss_voice: str) -> Tuple[object, str]:
     """MOSS 本地 CPU TTS（兜底方案）。"""
     tts = MossHttpTTS(url=moss_url, voice=moss_voice)
@@ -136,10 +173,16 @@ def build_tts(provider: str, moss_url: str, moss_voice: str) -> Tuple[object, st
     Returns:
         (tts_instance, label_for_log)
     """
-    provider = (provider or "mimo").strip().lower()
+    provider = (provider or "fish_audio").strip().lower()
     started = time.time()
 
-    # MiMo 的 Token Plan 与按量密钥不可混用，错误必须在启动阶段明确暴露。
+    # 默认供应商配置错误必须在启动阶段暴露，避免静默换成错误音色。
+    if provider in ("fish_audio", "fish"):
+        tts, label = _build_fish_audio()
+        print(f"[tts_factory] loaded {label} in {(time.time()-started)*1000:.0f}ms", flush=True)
+        return tts, label
+
+    # MiMo 的 Token Plan 与按量密钥不可混用，因此同样不做静默降级。
     if provider in ("mimo", "xiaomi"):
         tts, label = _build_mimo()
         print(f"[tts_factory] loaded {label} in {(time.time()-started)*1000:.0f}ms", flush=True)

@@ -36,7 +36,7 @@ services:
       LIVEKIT_URL: ws://livekit:7880
       AGENT_NAME: talk-to-me-mimo
       LLM_PROVIDER: mimo
-      TTS_PROVIDER: mimo
+      TTS_PROVIDER: ${TTS_PROVIDER:-fish_audio}
     command: ["python", "-m", "worker.main", "start"]
     depends_on:
       livekit:
