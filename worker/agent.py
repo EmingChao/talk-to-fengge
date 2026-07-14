@@ -39,6 +39,7 @@ from worker.runtime_env import (
     configure_local_no_proxy,
     local_service_env,
 )
+from worker.spoken_text import LeadingStageDirectionFilter
 from worker.tts_factory import build_tts  # 阶段 23：TTS 工厂
 
 
@@ -118,6 +119,7 @@ class _OpenAICompatLLMStream(llm.LLMStream):
     async def _run(self) -> None:
         """阶段 29.1 修复: 真正流式推 ChatChunk。"""
         request_id = utils.shortuuid()
+        spoken_text_filter = LeadingStageDirectionFilter()
         # 上下文窗口截断：保留 system prompt + 最近 N 条消息，防止长对话撑爆 token limit
         messages = self._messages
         if len(messages) > self._MAX_CONTEXT_MESSAGES + 1:
@@ -133,6 +135,9 @@ class _OpenAICompatLLMStream(llm.LLMStream):
             ):
                 if not piece:
                     continue
+                piece = spoken_text_filter.feed(piece)
+                if not piece:
+                    continue
                 chat_chunk = llm.ChatChunk(
                     id=request_id,
                     delta=llm.ChoiceDelta(
@@ -142,6 +147,18 @@ class _OpenAICompatLLMStream(llm.LLMStream):
                 )
                 # 阶段 29.1 修复: send_nowait 而不是 send（chan 没 close 的时候 send_nowait 是非阻塞的）
                 self._event_ch.send_nowait(chat_chunk)
+
+            remaining_text = spoken_text_filter.finish()
+            if remaining_text:
+                self._event_ch.send_nowait(
+                    llm.ChatChunk(
+                        id=request_id,
+                        delta=llm.ChoiceDelta(
+                            role="assistant",
+                            content=remaining_text,
+                        ),
+                    )
+                )
         except Exception as exc:
             print(f"[llm] openai-compat error: {exc!r} (messages={len(messages)})", flush=True)
             raise llm.APIConnectionError(
