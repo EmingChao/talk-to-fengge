@@ -322,6 +322,13 @@ function bootTalkToMe() {
     const MODEL_NAME = '峰哥';
     const MAX_VISIBLE_MESSAGES = 100;
     const TEXT_CHAT_TOPIC = 'talk-to-fengge.chat';
+    const TEXT_CHAT_ACK_TOPIC = 'agent.message_ack';
+    const MESSAGE_ACK_TIMEOUT_MS = 6000;
+    const MAX_MESSAGE_SEND_ATTEMPTS = 2;
+    const AGENT_READY_WAIT_MS = 5000;
+    const ROOM_RECOVERY_WAIT_MS = 3000;
+    const AUTO_RECONNECT_DELAY_MS = 1200;
+    const MAX_AUTO_RECONNECT_ATTEMPTS = 5;
 
     // ================================================================
     //  DOM
@@ -832,16 +839,16 @@ function bootTalkToMe() {
     function setStatus(state, customText) {
         if (state === 'ready') {
             statusDot.className = 'ready';
-            statusText.textContent = MODEL_NAME + ' 就绪';
+            statusText.textContent = customText || MODEL_NAME + ' 就绪';
         } else if (state === 'connecting') {
             statusDot.className = 'connecting';
-            statusText.textContent = MODEL_NAME + ' 连接中...';
+            statusText.textContent = customText || MODEL_NAME + ' 连接中...';
         } else if (state === 'connected') {
             statusDot.className = 'connected';
-            statusText.textContent = MODEL_NAME + ' 对话中';
+            statusText.textContent = customText || MODEL_NAME + ' 对话中';
         } else if (state === 'disconnected') {
             statusDot.className = 'ready';
-            statusText.textContent = MODEL_NAME + ' 已断开';
+            statusText.textContent = customText || MODEL_NAME + ' 已断开';
         } else {
             statusDot.className = 'error';
             statusText.textContent = customText || '出错了';
@@ -908,9 +915,17 @@ function bootTalkToMe() {
     }
 
     /** 展示 Agent 主动发送的状态或兼容数据消息。 */
-    function handleDataMessage(payload) {
+    function handleDataMessage(payload, topic) {
         const data = parseDataMessage(payload);
         if (!data) return;
+        if (
+            data.type === 'message_ack'
+            && data.id
+            && (!topic || topic === TEXT_CHAT_ACK_TOPIC)
+        ) {
+            acknowledgePendingMessage(String(data.id));
+            return;
+        }
         const message = typeof data === 'string'
             ? data
             : data.message || data.text || data.transcript || data.transcription || '';
@@ -969,6 +984,12 @@ function bootTalkToMe() {
     let localIdentity = '';
     let microphoneEnabled = false;
     let agentReady = false;
+    let connectionPromise = null;
+    let roomGeneration = 0;
+    let reconnectTimer = null;
+    let reconnectAttempts = 0;
+    let messageSendInProgress = false;
+    const pendingMessages = new Map();
 
     /** 更新输入提示；即使房间暂未连接，也允许用户先填写文字。 */
     function setComposerEnabled(enabled) {
@@ -1018,19 +1039,172 @@ function bootTalkToMe() {
         return 'msg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
     }
 
+    /** 判断事件是否仍属于当前正在使用的 Room，避免旧连接覆盖新连接状态。 */
+    function isActiveRoom(activeRoom, generation) {
+        return room === activeRoom && roomGeneration === generation;
+    }
+
+    /** 使用 LiveKit 的真实状态判断数据通道是否可发送。 */
+    function isRoomConnected(activeRoom = room) {
+        return Boolean(
+            activeRoom
+            && activeRoom.state === LivekitClient.ConnectionState.Connected
+        );
+    }
+
+    /** 等待 Agent 加入当前房间，超时后由调用方决定是否重建房间。 */
+    function waitForAgentReady(timeoutMs) {
+        const deadline = Date.now() + timeoutMs;
+        return new Promise((resolve) => {
+            const check = () => {
+                if (isRoomConnected() && agentReady) {
+                    resolve(true);
+                    return;
+                }
+                if (Date.now() >= deadline) {
+                    resolve(false);
+                    return;
+                }
+                setTimeout(check, 100);
+            };
+            check();
+        });
+    }
+
+    /** 等待 LiveKit 内部重连完成，只有超时才重建房间。 */
+    function waitForRoomConnected(timeoutMs) {
+        const deadline = Date.now() + timeoutMs;
+        return new Promise((resolve) => {
+            const check = () => {
+                if (isRoomConnected()) {
+                    resolve(true);
+                    return;
+                }
+                if (!room || Date.now() >= deadline) {
+                    resolve(false);
+                    return;
+                }
+                setTimeout(check, 100);
+            };
+            check();
+        });
+    }
+
+    /** 清理自动重连任务；Agent 恢复后同时重置退避次数。 */
+    function clearReconnectSchedule() {
+        if (reconnectTimer) clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+        reconnectAttempts = 0;
+    }
+
+    /** 在不覆盖用户新输入的前提下恢复未送达消息。 */
+    function restoreMessageInput(text) {
+        if (!messageInput.value.trim()) {
+            messageInput.value = text;
+            messageInput.style.height = 'auto';
+            messageInput.style.height = Math.min(messageInput.scrollHeight, 112) + 'px';
+        }
+        sendButton.disabled = !messageInput.value.trim();
+    }
+
+    /** 收到 Agent ACK 后结束该消息的重试生命周期。 */
+    function acknowledgePendingMessage(messageId) {
+        const pending = pendingMessages.get(messageId);
+        if (!pending) return;
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
+        pendingMessages.delete(messageId);
+    }
+
+    /** 确保房间和 Agent 均可用；恢复失败时创建一个全新的会话房间。 */
+    async function ensureConversationReady() {
+        if (isRoomConnected() && agentReady) return true;
+
+        // 优先等待 SDK 自己的短暂重连，避免每次网络抖动都切换房间。
+        if (room && await waitForRoomConnected(ROOM_RECOVERY_WAIT_MS)) {
+            if (agentReady || await waitForAgentReady(AGENT_READY_WAIT_MS)) return true;
+        }
+
+        const connectedNow = await connect(true);
+        if (!connectedNow) return false;
+        return waitForAgentReady(AGENT_READY_WAIT_MS);
+    }
+
+    /** 发布待确认消息，并为 ACK 超时建立一次性重试计时器。 */
+    async function publishPendingMessage(pending) {
+        if (pending.sending) return false;
+        pending.sending = true;
+        if (pending.timeoutId) clearTimeout(pending.timeoutId);
+        pending.timeoutId = null;
+
+        try {
+            if (!await ensureConversationReady()) {
+                throw new Error('Agent 尚未恢复连接');
+            }
+            const activeRoom = room;
+            await activeRoom.localParticipant.publishData(pending.payload, {
+                reliable: true,
+                topic: TEXT_CHAT_TOPIC,
+            });
+            pending.attempts += 1;
+            pending.timeoutId = setTimeout(
+                () => handleMessageAckTimeout(pending.id),
+                MESSAGE_ACK_TIMEOUT_MS
+            );
+            return true;
+        } catch (error) {
+            console.error('publish text data failed', error);
+            return false;
+        } finally {
+            pending.sending = false;
+        }
+    }
+
+    /** ACK 超时后自动重发一次；仍失败则明确恢复输入并提示用户。 */
+    async function handleMessageAckTimeout(messageId) {
+        const pending = pendingMessages.get(messageId);
+        if (!pending) return;
+
+        if (pending.attempts < MAX_MESSAGE_SEND_ATTEMPTS) {
+            showToast('连接已恢复，正在重新发送消息');
+            if (await publishPendingMessage(pending)) return;
+        }
+
+        pendingMessages.delete(messageId);
+        restoreMessageInput(pending.text);
+        showToast('消息未送达，请重新发送');
+    }
+
+    /** 连接或 Agent 离开后延迟重建会话，并使用有限退避避免反复创建房间。 */
+    function scheduleReconnect() {
+        if (reconnectTimer) return;
+        const delay = Math.min(
+            AUTO_RECONNECT_DELAY_MS * Math.pow(2, Math.min(reconnectAttempts, 3)),
+            10000
+        );
+        reconnectTimer = setTimeout(async () => {
+            reconnectTimer = null;
+            if (isRoomConnected() && agentReady) {
+                clearReconnectSchedule();
+                return;
+            }
+            reconnectAttempts += 1;
+            if (reconnectAttempts > MAX_AUTO_RECONNECT_ATTEMPTS) {
+                setStatus('error', '连接恢复失败，请重新发送消息');
+                return;
+            }
+            const reconnected = await connect(true);
+            if (!reconnected || !await waitForAgentReady(AGENT_READY_WAIT_MS)) {
+                scheduleReconnect();
+            }
+        }, delay);
+    }
+
     /** 通过可靠 DataPacket 将用户文字发送到当前 AgentSession。 */
     async function sendMessage() {
         const text = messageInput.value.trim();
-        if (!text) return;
-        if (!connected || !room) {
-            if (!connecting) connect();
-            showToast('正在连接，请稍后再次发送');
-            return;
-        }
-        if (!agentReady) {
-            showToast('峰哥正在进入房间，请稍后再次发送');
-            return;
-        }
+        if (!text || messageSendInProgress) return;
+        messageSendInProgress = true;
+        sendButton.disabled = true;
 
         // 用户点击发送属于浏览器手势，可在此恢复远端音频播放上下文。
         ensureAudioGraph();
@@ -1040,21 +1214,32 @@ function bootTalkToMe() {
             id: messageId,
             text: text,
         }));
-        messageInput.value = '';
-        messageInput.style.height = 'auto';
-        sendButton.disabled = true;
+        const pending = {
+            id: messageId,
+            text: text,
+            payload: payload,
+            attempts: 0,
+            timeoutId: null,
+            sending: false,
+        };
+        pendingMessages.set(messageId, pending);
+
         try {
-            await room.localParticipant.publishData(payload, {
-                reliable: true,
-                topic: TEXT_CHAT_TOPIC,
-            });
+            if (!await publishPendingMessage(pending)) {
+                pendingMessages.delete(messageId);
+                restoreMessageInput(text);
+                showToast('连接恢复失败，请稍后重试');
+                return;
+            }
+            // 连接恢复期间用户可能继续编辑输入框，只清理本次实际发送的原文。
+            if (messageInput.value.trim() === text) {
+                messageInput.value = '';
+                messageInput.style.height = 'auto';
+            }
             upsertMessage('user', text, messageId);
-        } catch (error) {
-            console.error('publish text data failed', error);
-            messageInput.value = text;
-            sendButton.disabled = false;
-            const reason = error && error.message ? error.message : '未知错误';
-            showToast('消息发送失败：' + reason);
+        } finally {
+            messageSendInProgress = false;
+            sendButton.disabled = !messageInput.value.trim();
         }
     }
 
@@ -1071,91 +1256,167 @@ function bootTalkToMe() {
         }
     });
 
-    async function connect() {
-        if (connected || connecting) return connected;
-        connecting = true;
-        setStatus('connecting');
+    async function connect(forceReconnect = false) {
+        if (!forceReconnect && isRoomConnected()) return true;
+        if (connectionPromise) return connectionPromise;
+
+        connectionPromise = (async () => {
+            connecting = true;
+            setStatus('connecting');
+            const generation = ++roomGeneration;
+            const previousRoom = room;
+            room = null;
+            connected = false;
+            agentReady = false;
+
+            if (previousRoom) {
+                try { await previousRoom.disconnect(); } catch (_) {}
+            }
+
+            try {
+                const connectionInfo = await getConnectionInfo();
+                const activeRoom = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+                room = activeRoom;
+                registerTextHandlers(activeRoom);
+
+                activeRoom.on(LivekitClient.RoomEvent.Connected, () => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    connected = true;
+                    connecting = false;
+                    localIdentity = activeRoom.localParticipant
+                        ? activeRoom.localParticipant.identity
+                        : '';
+                    agentReady = activeRoom.remoteParticipants
+                        && activeRoom.remoteParticipants.size > 0;
+                    setStatus(
+                        agentReady ? 'connected' : 'connecting',
+                        agentReady ? null : MODEL_NAME + ' 正在进入房间...'
+                    );
+                    setComposerEnabled(true);
+                    startTimer();
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.Reconnecting, () => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    connected = false;
+                    connecting = true;
+                    setStatus('connecting', MODEL_NAME + ' 正在恢复连接...');
+                    setComposerEnabled(false);
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.Reconnected, () => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    connected = true;
+                    connecting = false;
+                    agentReady = activeRoom.remoteParticipants
+                        && activeRoom.remoteParticipants.size > 0;
+                    setStatus(
+                        agentReady ? 'connected' : 'connecting',
+                        agentReady ? null : MODEL_NAME + ' 正在重新加入...'
+                    );
+                    setComposerEnabled(true);
+                    if (agentReady) clearReconnectSchedule();
+                    else scheduleReconnect();
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.Disconnected, () => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    connected = false;
+                    connecting = false;
+                    agentReady = false;
+                    setStatus('disconnected', MODEL_NAME + ' 连接已断开，正在重连...');
+                    microphoneEnabled = false;
+                    micButton.classList.remove('enabled');
+                    micButton.setAttribute('aria-label', '启用麦克风');
+                    setComposerEnabled(false);
+                    stopTimer();
+                    disconnectMicFromAnalyser();
+                    remoteAudio.srcObject = null;
+                    room = null;
+                    scheduleReconnect();
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.ParticipantConnected, () => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    agentReady = activeRoom.remoteParticipants
+                        && activeRoom.remoteParticipants.size > 0;
+                    if (!agentReady) return;
+                    clearReconnectSchedule();
+                    setStatus('connected');
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.ParticipantDisconnected, () => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    agentReady = activeRoom.remoteParticipants
+                        && activeRoom.remoteParticipants.size > 0;
+                    if (!agentReady) {
+                        setStatus('connecting', MODEL_NAME + ' 正在重新进入房间...');
+                        scheduleReconnect();
+                    }
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    if (track.kind !== LivekitClient.Track.Kind.Audio) return;
+                    track.attach(remoteAudio);
+                    applyRemoteMute();
+                    const p = remoteAudio.play ? remoteAudio.play() : null;
+                    if (p && typeof p.catch === 'function') {
+                        p.catch((err) => console.warn('remote audio autoplay blocked', err));
+                    }
+                });
+
+                activeRoom.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+                    if (!isActiveRoom(activeRoom, generation)) return;
+                    if (track.kind !== LivekitClient.Track.Kind.Audio) return;
+                    try { track.detach(remoteAudio); } catch (_) {}
+                    remoteAudio.srcObject = null;
+                });
+
+                activeRoom.on(
+                    LivekitClient.RoomEvent.DataReceived,
+                    (payload, _participant, _kind, topic) => {
+                        if (!isActiveRoom(activeRoom, generation)) return;
+                        handleDataMessage(payload, topic);
+                    }
+                );
+
+                await activeRoom.connect(connectionInfo.livekit_url, connectionInfo.token);
+                connecting = false;
+                return isActiveRoom(activeRoom, generation) && isRoomConnected(activeRoom);
+            } catch (err) {
+                console.error(err);
+                if (roomGeneration === generation) {
+                    room = null;
+                    connected = false;
+                    connecting = false;
+                    agentReady = false;
+                    setStatus('error', '连接失败，正在重试');
+                    micButton.classList.remove('enabled');
+                    setComposerEnabled(false);
+                }
+                scheduleReconnect();
+                return false;
+            }
+        })();
 
         try {
-            const connectionInfo = await getConnectionInfo();
-
-            room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
-            registerTextHandlers(room);
-
-            room.on(LivekitClient.RoomEvent.Connected, () => {
-                connected = true;
-                localIdentity = room.localParticipant ? room.localParticipant.identity : '';
-                agentReady = room.remoteParticipants && room.remoteParticipants.size > 0;
-                setStatus('connected');
-                setComposerEnabled(true);
-                startTimer();
-            });
-
-            room.on(LivekitClient.RoomEvent.Disconnected, () => {
-                connected = false;
-                connecting = false;
-                agentReady = false;
-                setStatus('disconnected');
-                microphoneEnabled = false;
-                micButton.classList.remove('enabled');
-                micButton.setAttribute('aria-label', '启用麦克风');
-                setComposerEnabled(false);
-                stopTimer();
-                disconnectMicFromAnalyser();
-                remoteAudio.srcObject = null;
-                room = null;
-            });
-
-            room.on(LivekitClient.RoomEvent.ParticipantConnected, () => {
-                agentReady = true;
-                setStatus('connected');
-            });
-
-            room.on(LivekitClient.RoomEvent.ParticipantDisconnected, () => {
-                agentReady = room.remoteParticipants && room.remoteParticipants.size > 0;
-            });
-
-            room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
-                if (track.kind !== LivekitClient.Track.Kind.Audio) return;
-                track.attach(remoteAudio);
-                applyRemoteMute();
-                const p = remoteAudio.play ? remoteAudio.play() : null;
-                if (p && typeof p.catch === 'function') {
-                    p.catch((err) => console.warn('remote audio autoplay blocked', err));
-                }
-            });
-
-            room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
-                if (track.kind !== LivekitClient.Track.Kind.Audio) return;
-                try { track.detach(remoteAudio); } catch (_) {}
-                remoteAudio.srcObject = null;
-            });
-
-            room.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
-                handleDataMessage(payload);
-            });
-
-            await room.connect(connectionInfo.livekit_url, connectionInfo.token);
-            connecting = false;
-            return true;
-        } catch (err) {
-            console.error(err);
-            connecting = false;
-            connected = false;
-            setStatus('error', '连接失败');
-            micButton.classList.remove('enabled');
-            setComposerEnabled(false);
-            if (room) { try { room.disconnect(); } catch (_) {} room = null; }
-            return false;
+            return await connectionPromise;
+        } finally {
+            connectionPromise = null;
         }
     }
 
     /** 只切换麦克风输入，不再承担房间连接和断开职责。 */
     async function toggleMicrophone() {
-        if (!connected) {
+        if (!isRoomConnected() || !agentReady) {
             const connectedNow = await connect();
             if (!connectedNow) {
                 showToast('房间尚未连接，无法启用麦克风');
+                return;
+            }
+            if (!await waitForAgentReady(AGENT_READY_WAIT_MS)) {
+                showToast('峰哥正在进入房间，请稍后重试');
                 return;
             }
         }

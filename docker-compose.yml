@@ -2,7 +2,7 @@ name: talk-to-fengge
 
 services:
   livekit:
-    image: ${LIVEKIT_IMAGE:-livekit/livekit-server:v1.9.0}
+    image: ${LIVEKIT_IMAGE:-livekit/livekit-server:v1.9.2}
     restart: unless-stopped
     command:
       - --config

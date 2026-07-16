@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+from collections import deque
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -214,7 +215,10 @@ MOSS_TTS_URL = os.getenv("MOSS_TTS_URL", "http://127.0.0.1:18083/v1/audio/speech
 MOSS_VOICE_PROFILE = os.getenv("MOSS_VOICE_PROFILE", "ye-local").strip()
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "fish_audio").strip().lower()
 TEXT_CHAT_TOPIC = "talk-to-fengge.chat"
+TEXT_CHAT_ACK_TOPIC = "agent.message_ack"
 MAX_TEXT_INPUT_CHARS = 2000
+MAX_RECENT_TEXT_MESSAGE_IDS = 200
+PARTICIPANT_RECONNECT_GRACE_S = 60.0
 MEMORY_SESSION_PREFIX = os.getenv("MEMORY_SESSION_PREFIX", "dev3-pipeline")
 _persona_for_memory = os.getenv("PERSONA_NAME", "fengge").strip().lower()
 _project_root = Path(__file__).resolve().parent.parent
@@ -794,14 +798,125 @@ async def entrypoint(ctx: JobContext) -> None:
                 )
             )
 
+    participant_cleanup_task: asyncio.Task[None] | None = None
+
+    def _cancel_participant_cleanup() -> None:
+        """用户在宽限期内重连时取消延迟关闭任务。"""
+        nonlocal participant_cleanup_task
+        if participant_cleanup_task is not None and not participant_cleanup_task.done():
+            participant_cleanup_task.cancel()
+        participant_cleanup_task = None
+
+    @ctx.room.on("participant_connected")
+    def _on_participant_reconnected(participant: rtc.RemoteParticipant) -> None:
+        """普通用户重新进入房间后继续复用当前 AgentSession。"""
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+            return
+        _cancel_participant_cleanup()
+        print(
+            f"[agent] participant reconnected identity={participant.identity}",
+            flush=True,
+        )
+
+    @ctx.room.on("participant_disconnected")
+    def _on_participant_temporarily_disconnected(
+        participant: rtc.RemoteParticipant,
+    ) -> None:
+        """用户离开后保留短暂重连窗口，超时再关闭当前 Agent 作业。"""
+        nonlocal participant_cleanup_task
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_AGENT:
+            return
+
+        # 房间中仍有普通用户时不启动清理，避免影响多人调试场景。
+        has_active_user = any(
+            remote.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+            for remote in ctx.room.remote_participants.values()
+        )
+        if has_active_user:
+            return
+
+        _cancel_participant_cleanup()
+
+        async def _shutdown_after_grace() -> None:
+            """宽限期结束且用户未返回时关闭作业，避免孤立 Agent 长期占用资源。"""
+            nonlocal participant_cleanup_task
+            try:
+                await asyncio.sleep(PARTICIPANT_RECONNECT_GRACE_S)
+            except asyncio.CancelledError:
+                return
+
+            has_reconnected_user = any(
+                remote.kind != rtc.ParticipantKind.PARTICIPANT_KIND_AGENT
+                for remote in ctx.room.remote_participants.values()
+            )
+            if has_reconnected_user:
+                return
+
+            print(
+                "[agent] participant reconnect grace expired, shutting down job",
+                flush=True,
+            )
+            # 先清空任务引用，避免 session close 回调取消当前正在执行的任务。
+            participant_cleanup_task = None
+            await session.aclose()
+            ctx.shutdown("participant reconnect grace expired")
+
+        participant_cleanup_task = asyncio.create_task(_shutdown_after_grace())
+        print(
+            f"[agent] participant disconnected identity={participant.identity}, "
+            f"waiting {PARTICIPANT_RECONNECT_GRACE_S:.0f}s for reconnect",
+            flush=True,
+        )
+
     @session.on("close")
     def _on_close(ev) -> None:
+        _cancel_participant_cleanup()
         print(f"[agent] close reason={ev.reason}", flush=True)
         if recorder is not None:
             asyncio.create_task(recorder.finalize())
 
     pending_text_inputs: list[tuple[str, str, str]] = []
+    recent_text_message_ids: set[str] = set()
+    recent_text_message_order: deque[str] = deque()
     session_ready = False
+
+    def _acknowledge_text_message(message_id: str) -> None:
+        """异步确认 Agent 已收到文字消息，避免前端将静默丢包误判为已送达。"""
+        payload = json.dumps(
+            {
+                "type": "message_ack",
+                "id": message_id,
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+        async def _publish_ack() -> None:
+            """发布可靠 ACK；ACK 失败不影响已经进入处理流程的用户消息。"""
+            try:
+                await ctx.room.local_participant.publish_data(
+                    payload,
+                    reliable=True,
+                    topic=TEXT_CHAT_ACK_TOPIC,
+                )
+            except Exception as exc:
+                print(
+                    f"[text_chat] ack failed id={message_id}: {exc!r}",
+                    flush=True,
+                )
+
+        asyncio.create_task(_publish_ack())
+
+    def _remember_text_message(message_id: str) -> bool:
+        """记录最近处理的消息标识，并识别前端 ACK 超时后的重复发送。"""
+        if message_id in recent_text_message_ids:
+            return False
+
+        recent_text_message_ids.add(message_id)
+        recent_text_message_order.append(message_id)
+        if len(recent_text_message_order) > MAX_RECENT_TEXT_MESSAGE_IDS:
+            expired_message_id = recent_text_message_order.popleft()
+            recent_text_message_ids.discard(expired_message_id)
+        return True
 
     def _generate_text_reply(message_id: str, text: str, identity: str) -> None:
         """中断当前回复，并使用收到的文字生成新回复。"""
@@ -839,11 +954,23 @@ async def entrypoint(ctx: JobContext) -> None:
 
         participant = getattr(packet, "participant", None)
         identity = getattr(participant, "identity", "unknown")
-        message_id = str(payload.get("id") or "unknown")
+        message_id = str(payload.get("id") or "").strip()
+        if not message_id:
+            print("[text_chat] ignored message without id", flush=True)
+            return
+
+        if not session_ready and len(pending_text_inputs) >= 20:
+            print("[text_chat] pending queue full, message ignored", flush=True)
+            return
+
+        # ACK 丢失时前端会使用相同 message_id 重试；重复消息只补发 ACK，不重复生成回复。
+        if not _remember_text_message(message_id):
+            print(f"[text_chat] duplicate id={message_id}, ack again", flush=True)
+            _acknowledge_text_message(message_id)
+            return
+
+        _acknowledge_text_message(message_id)
         if not session_ready:
-            if len(pending_text_inputs) >= 20:
-                print("[text_chat] pending queue full, message ignored", flush=True)
-                return
             pending_text_inputs.append((message_id, text, identity))
             print(f"[text_chat] queued id={message_id} until session ready", flush=True)
             return
@@ -858,6 +985,8 @@ async def entrypoint(ctx: JobContext) -> None:
             text_input=False,
             audio_output=True,
             text_output=room_io.TextOutputOptions(sync_transcription=False),
+            # 浏览器休眠或网络抖动不应关闭 AgentSession，前端恢复后继续复用当前房间。
+            close_on_disconnect=False,
         ),
     )
     session_ready = True
